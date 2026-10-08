@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { arrowTexture, loadAssets, spawnModel } from './assets'
+import { arrowTexture, loadAssets, renderPieceThumbnails, spawnModel } from './assets'
 import { audio } from './audio'
 import {
   BASE_COST,
@@ -97,6 +97,15 @@ function isRoof(id: string): id is RoofId {
   return id === 'a' || id === 'b' || id === 'c'
 }
 
+const MIDDLE_EFFECT: Record<MiddleId, string> = { a: 'Faster', b: 'Range', c: 'Reach' }
+const ROOF_EFFECT: Record<RoofId, string> = { a: 'Slow', b: 'Splash', c: 'Shred' }
+const WEAPON_EFFECT: Record<WeaponId, string> = {
+  ballista: 'Pierce',
+  cannon: 'Splash',
+  catapult: 'Slow',
+  turret: 'Rapid',
+}
+
 function detectQuality(coarse: boolean): { shadows: boolean; shadowMapSize: number; pixelRatio: number } {
   const nav = navigator as Navigator & { deviceMemory?: number }
   const memory = nav.deviceMemory ?? 8
@@ -180,10 +189,10 @@ export class Game {
   private fpsFrames = 0
   private fpsAccum = 0
   private hint: boolean
-  private target = new THREE.Vector3(3, 0.35, 4.35)
-  private distance = 16
+  private target = new THREE.Vector3(3.15, 0.08, 4.9)
+  private distance = 18.2
   private visualTime = 0
-  private readonly pitch = 0.78
+  private pitch = 0.72
   private readonly azimuth = 2.25
   private userCam = false
   private cameraLock: { pos: THREE.Vector3; look: THREE.Vector3 } | null = null
@@ -210,39 +219,42 @@ export class Game {
     })
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.08
+    this.renderer.toneMappingExposure = 1.02
     this.renderer.setPixelRatio(quality.pixelRatio)
     if (quality.shadows) {
       this.renderer.shadowMap.enabled = true
       this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     }
-    this.camera = new THREE.PerspectiveCamera(30, 1, 0.12, 90)
+    this.camera = new THREE.PerspectiveCamera(52, 1, 0.12, 90)
     this.app.prepend(this.renderer.domElement)
     this.hint = localStorage.getItem('tiny-td-hint-v1') !== '1'
 
     this.scene.background = skyTexture()
-    this.scene.fog = new THREE.Fog(0xf3d7b4, 28, 58)
-    this.scene.add(new THREE.AmbientLight(0xfff3e2, 0.38))
-    this.scene.add(new THREE.HemisphereLight(0xfff6ea, 0x7ea35a, 0.62))
-    const sun = new THREE.DirectionalLight(0xfff1d2, 1.85)
-    sun.position.set(7.5, 14, 3.5)
+    this.scene.fog = new THREE.Fog(0xf6e2c8, 42, 82)
+    this.scene.add(new THREE.AmbientLight(0xfff1df, 0.3))
+    this.scene.add(new THREE.HemisphereLight(0xfff4e4, 0x5c8644, 0.4))
+    const sun = new THREE.DirectionalLight(0xffd89a, 2.45)
+    sun.position.set(11, 8.2, 6.5)
     sun.target.position.set(3, 0, 5)
     if (quality.shadows) {
       sun.castShadow = true
       sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize)
-      sun.shadow.camera.near = 4
-      sun.shadow.camera.far = 32
-      sun.shadow.camera.left = -8
-      sun.shadow.camera.right = 8
-      sun.shadow.camera.top = 9
-      sun.shadow.camera.bottom = -9
-      sun.shadow.bias = -0.0004
-      sun.shadow.normalBias = 0.028
-      sun.shadow.radius = 2
+      sun.shadow.camera.near = 0.5
+      sun.shadow.camera.far = 42
+      sun.shadow.camera.left = -11
+      sun.shadow.camera.right = 11
+      sun.shadow.camera.top = 13
+      sun.shadow.camera.bottom = -13
+      sun.shadow.bias = -0.001
+      sun.shadow.normalBias = 0.03
+      sun.shadow.radius = 1.6
     }
     this.scene.add(sun)
     this.scene.add(sun.target)
-    const fill = new THREE.DirectionalLight(0xc5e4ff, 0.28)
+    const rim = new THREE.DirectionalLight(0xffb15a, 0.72)
+    rim.position.set(-8, 4.5, 10)
+    this.scene.add(rim)
+    const fill = new THREE.DirectionalLight(0xc5e4ff, 0.08)
     fill.position.set(-6, 5, -4)
     this.scene.add(fill)
 
@@ -289,6 +301,7 @@ export class Game {
     await loadAssets((ratio) => {
       this.hud.setLoading(`Raising the meadow… ${Math.round(ratio * 100)}%`)
     })
+    renderPieceThumbnails()
     const arrow = await arrowTexture()
     ;(this.hintMarker.material as THREE.SpriteMaterial).map = arrow
     this.map = buildMap()
@@ -314,16 +327,20 @@ export class Game {
     this.renderer.setSize(width, height, false)
     this.renderer.domElement.style.width = `${width}px`
     this.renderer.domElement.style.height = `${height}px`
-    if (!this.userCam) this.distance = this.fitDistance()
+    const frame = this.framing()
+    this.camera.fov = frame.fov
+    this.pitch = frame.pitch
+    this.camera.updateProjectionMatrix()
+    if (!this.userCam) this.distance = frame.distance
     this.clampCamera()
   }
 
-  private fitDistance(): number {
+  /** Portrait pulls back enough to show sky and the dirt lip. Wider screens sit closer. */
+  private framing(): { fov: number; pitch: number; distance: number } {
     const aspect = this.camera.aspect
-    if (aspect < 0.62) return 16.4
-    if (aspect < 0.9) return 14.6
-    if (aspect < 1.25) return 13.4
-    return 12.6
+    if (aspect < 0.62) return { fov: 40, pitch: 0.72, distance: 18.2 }
+    if (aspect < 1.05) return { fov: 36, pitch: 0.74, distance: 16.8 }
+    return { fov: 32, pitch: 0.72, distance: 15.4 }
   }
 
   private clampCamera(): void {
@@ -345,7 +362,7 @@ export class Game {
       Math.sin(this.pitch) * this.distance + Math.cos(performance.now() * 0.05) * this.shake,
       this.target.z + Math.cos(this.azimuth) * horiz,
     )
-    this.camera.lookAt(this.target.x, 0.35, this.target.z)
+    this.camera.lookAt(this.target.x, 0.12, this.target.z)
   }
 
   private bindInput(): void {
@@ -1071,6 +1088,7 @@ export class Game {
         actions.push({
           id: `middle-${id}`,
           label: def.label,
+          effect: MIDDLE_EFFECT[id],
           detail: def.blurb,
           cost: String(def.cost),
           enabled: this.gold >= def.cost && tower.middles.length < MAX_MIDDLES,
@@ -1082,6 +1100,7 @@ export class Game {
         actions.push({
           id: `roof-${id}`,
           label: def.label,
+          effect: ROOF_EFFECT[id],
           detail: def.blurb,
           cost: String(def.cost),
           enabled: this.gold >= def.cost,
@@ -1093,6 +1112,7 @@ export class Game {
         actions.push({
           id,
           label: def.label,
+          effect: WEAPON_EFFECT[id],
           detail: def.blurb,
           cost: String(def.cost),
           enabled: this.gold >= def.cost,
@@ -1100,32 +1120,38 @@ export class Game {
         })
       }
       const refund = Math.floor(tower.spent * SELL_RATIO)
-      actions.push({ id: 'sell', label: 'Sell', detail: 'Refund half', cost: `+${refund}`, enabled: true, tone: 'red' })
-      const roof = tower.roof ? ROOFS[tower.roof].label : 'no roof'
-      const weapon = tower.weapon ? WEAPONS[tower.weapon].label : 'no weapon'
+      actions.push({
+        id: 'sell',
+        label: 'Sell',
+        effect: 'Refund',
+        detail: 'Returns half of what this tower cost.',
+        cost: `+${refund}`,
+        enabled: true,
+        tone: 'red',
+      })
+      const weapon = tower.weapon ? WEAPONS[tower.weapon].label : 'No weapon'
       const rate = stats.cooldown < 100 ? `${(1 / stats.cooldown).toFixed(1)}/s` : '—'
       return {
         title: 'Your tower',
-        blurb: tower.weapon
-          ? `${WEAPONS[tower.weapon].blurb} Stack more floors any time.`
-          : 'Add a weapon or it will not fire. You can stack during a wave.',
-        stats: `Range ${stats.range.toFixed(1)} · ${rate} · ${tower.middles.length} floors · ${weapon} · ${roof}`,
+        blurb: '',
+        stats: `Range ${stats.range.toFixed(1)} · ${rate} · ${weapon}`,
         actions,
       }
     }
     if (cell.kind === 'build') {
       return {
         title: 'Open grass',
-        blurb:
+        blurb: '',
+        stats:
           this.towers.length >= MAX_TOWERS
-            ? `This meadow holds ${MAX_TOWERS} towers. Stack the ones you have.`
-            : 'Place a base, then stack a weapon. Mids change fire rate. Roofs add slow, splash, or shield-break.',
-        stats: `Base range ${BASE_RANGE.toFixed(1)} · ${this.towers.length}/${MAX_TOWERS} towers`,
+            ? `${MAX_TOWERS} towers already`
+            : `${this.towers.length}/${MAX_TOWERS} towers`,
         actions: [
           {
             id: 'base',
-            label: 'Build',
-            detail: 'Place a base',
+            label: 'Base',
+            effect: 'Place',
+            detail: 'The foot of a tower. Add a weapon or it will not fire.',
             cost: String(BASE_COST),
             enabled: this.gold >= BASE_COST && this.towers.length < MAX_TOWERS,
             tone: 'green',
@@ -1143,11 +1169,8 @@ export class Game {
     }
     return {
       title: titles[cell.kind],
-      blurb:
-        cell.kind === 'block'
-          ? 'Trees, rocks, crystals, and the river are not buildable.'
-          : 'UFOs fly this way. If one reaches the pen it beams a pet away.',
-      stats: '',
+      blurb: '',
+      stats: cell.kind === 'block' ? 'Not buildable' : 'UFOs fly this way',
       actions: [],
     }
   }
@@ -1248,8 +1271,8 @@ export class Game {
     this.selected = null
     this.userCam = false
     this.cameraLock = null
-    this.distance = this.fitDistance()
-    this.target.set(3, 0.35, 4.35)
+    this.distance = this.framing().distance
+    this.target.set(3.15, 0.08, 4.9)
     audio.duck(false)
     this.spawnPets()
     this.syncMarker()

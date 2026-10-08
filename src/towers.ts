@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { spawnModel } from './assets'
+import { contactShadow, spawnModel } from './assets'
 import {
   type MiddleId,
   type RoofId,
@@ -33,6 +33,7 @@ export class Tower {
     readonly z: number,
   ) {
     this.group.position.set(x, 0, z)
+    this.group.add(contactShadow(0.5))
     this.startScaffold()
   }
 
@@ -109,6 +110,7 @@ export class Tower {
 
   private clear(): void {
     for (const child of [...this.group.children]) {
+      if (child.userData.contact) continue
       this.group.remove(child)
     }
     this.weaponPivot = null

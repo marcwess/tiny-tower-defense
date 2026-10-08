@@ -91,22 +91,23 @@ html, body, #app {
 }
 
 .pill.gold { background-image: var(--btn-yellow); }
-.pill.wave { background-image: var(--btn-blue); color: #f7fbff; text-shadow: 0 1px 0 rgba(20, 40, 70, 0.35); }
+.pill.wave { background-image: var(--btn-blue); }
 .pill.pets { background-image: var(--btn-green); }
 
-.pill img { width: 26px; height: 26px; image-rendering: auto; }
+.pill img { width: 26px; height: 26px; image-rendering: auto; flex: 0 0 auto; }
 
 #mute.round {
-  width: 72px;
+  width: 56px;
   height: 56px;
   margin-left: auto;
   border: 0;
-  color: #f7fbff;
+  padding: 0 0 4px;
+  display: grid;
+  place-items: center;
   background: var(--btn-round) center / 100% 100% no-repeat;
-  font-family: inherit;
-  font-size: 13px;
-  padding: 0 0 6px;
 }
+
+#mute img { width: 28px; height: 28px; pointer-events: none; }
 
 #dock {
   width: min(820px, 100%);
@@ -126,16 +127,19 @@ html, body, #app {
 }
 
 #card {
-  padding: 14px 12px 16px;
+  padding: 12px 10px 14px;
   color: var(--ink);
   background: var(--panel) center / 100% 100% no-repeat;
+  max-height: min(70vh, 640px);
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 #card h2, #card p { margin: 0; }
 
 #card h2 {
   font-family: 'Kenney Thick', 'Kenney Bold', sans-serif;
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 400;
 }
 
@@ -143,16 +147,25 @@ html, body, #app {
   font-size: 14px;
   line-height: 1.3;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
-#card-stats { min-height: 1.2em; color: #2d6a45; margin-top: 2px; }
+#card-stats { color: #2d6a45; margin-top: 2px; }
+
+#card-blurb {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink);
+}
 
 #tray {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding: 8px 2px 2px;
-  scroll-snap-type: x mandatory;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  overflow: visible;
+  padding: 8px 0 0;
 }
 
 .piece, .btn {
@@ -166,15 +179,15 @@ html, body, #app {
 }
 
 .piece {
-  flex: 0 0 92px;
-  scroll-snap-align: start;
-  min-height: 84px;
-  padding: 8px 8px 16px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px 2px 8px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 2px;
+  justify-content: flex-start;
+  gap: 1px;
 }
 
 .piece.blue { background-image: var(--btn-blue); color: #f4fbff; }
@@ -183,9 +196,44 @@ html, body, #app {
 .piece.yellow { background-image: var(--btn-yellow); }
 .piece.off { filter: grayscale(0.55) brightness(0.92); }
 
-.piece-name { font-size: 15px; line-height: 1.05; }
-.piece-detail { font-size: 11px; line-height: 1.15; opacity: 0.9; max-width: 80px; }
-.piece-cost { font-size: 13px; }
+.thumb {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.thumb.fallback {
+  width: 32px;
+  height: 32px;
+  margin: 8px 0;
+  padding: 4px;
+  background: #fff6dc;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.piece-name, .piece-effect {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.piece-name { font-size: 11px; line-height: 1.05; }
+.piece-effect { font-size: 11px; line-height: 1.1; opacity: 0.85; }
+.piece-cost {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: 13px;
+  line-height: 1;
+}
+.piece-cost .coin { width: 14px; height: 14px; pointer-events: none; }
+.piece.hot { box-shadow: inset 0 0 0 3px rgba(255, 248, 220, 0.95); }
 
 #actions { display: flex; gap: 8px; }
 
@@ -212,7 +260,7 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
 }
 
 #end { background: rgba(48, 32, 18, 0.38); }
-#end[hidden], #loading[hidden], #card[hidden], #hint[hidden] { display: none; }
+#end[hidden], #loading[hidden], #card[hidden], #hint[hidden], #card-blurb[hidden] { display: none; }
 
 .end-card, #loading {
   width: min(420px, 100%);
@@ -263,18 +311,26 @@ h1 {
   80% { transform: translateX(2px); }
 }
 
+@media (min-width: 480px) {
+  #tray { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
 @media (orientation: landscape) and (max-height: 520px) {
   .pill { min-height: 40px; font-size: 15px; padding-bottom: 8px; }
-  .piece { flex-basis: 78px; min-height: 64px; padding-bottom: 12px; }
-  .piece-detail { display: none; }
+  #card { max-height: 46vh; padding: 8px 8px 10px; }
+  #tray { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
+  .thumb { width: 36px; height: 36px; }
+  .piece { padding: 4px 2px 8px; }
+  .piece-effect { display: none; }
   .btn { min-height: 50px; font-size: 16px; }
   #hint, #card-blurb { font-size: 12px; }
   #card h2 { font-size: 16px; }
   h1 { font-size: 24px; }
-  #mute.round { width: 56px; height: 46px; }
+  #mute.round { width: 48px; height: 46px; }
 }
 
 @media (min-width: 900px) {
   .pill { font-size: 20px; }
   #hint { font-size: 16px; }
+  #tray { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }

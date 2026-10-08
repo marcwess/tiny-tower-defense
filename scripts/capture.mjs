@@ -1,15 +1,23 @@
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { mkdir } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { chromium } from 'playwright'
 
-const PORT = 4173
+const bundle = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../dist/index.html'), 'utf8').match(
+  /index-[^"]+\.js/,
+)?.[0]
+if (!bundle) throw new Error('dist bundle missing')
+
+const PORT = Number(process.env.PORT || 4173)
 const URL = `http://127.0.0.1:${PORT}/?capture=1`
 const OUT = '/opt/cursor/artifacts/screenshots'
 
 const preview = spawn(
-  'npx',
-  ['vite', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'],
+  process.execPath,
+  ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'],
   { stdio: 'inherit' },
 )
 
@@ -61,6 +69,8 @@ try {
     console.error('pageerror', error.message)
   })
   await page.goto(URL, { waitUntil: 'networkidle' })
+  const served = await page.content()
+  if (!served.includes(bundle)) throw new Error(`preview is not serving ${bundle}`)
   await page.waitForFunction(() => window.__TINY_TD__?.ready && !window.__TINY_TD__.error)
 
   await page.evaluate(() => {
@@ -75,6 +85,32 @@ try {
   })
   await delay(1600)
   await page.screenshot({ path: `${OUT}/portrait_gameplay.png` })
+  const river = await page.evaluate(() => {
+    const pts = []
+    for (let x = 0.4; x <= 6.2; x += 0.35) {
+      const p = window.__TINY_TD__.project(x, 5)
+      if (p) pts.push(p)
+    }
+    return pts
+  })
+  if (river.length > 2) {
+    const xs = river.map((p) => p.x)
+    const ys = river.map((p) => p.y)
+    const scale = 2
+    const clip = {
+      x: Math.max(0, Math.floor(Math.min(...xs) * scale)),
+      y: Math.max(0, Math.floor((Math.min(...ys) - 18) * scale)),
+      width: Math.ceil((Math.max(...xs) - Math.min(...xs)) * scale),
+      height: Math.ceil(48 * scale),
+    }
+    await page.screenshot({ path: `${OUT}/river_crop.png`, clip: {
+      x: clip.x / scale,
+      y: clip.y / scale,
+      width: clip.width / scale,
+      height: clip.height / scale,
+    } })
+    console.log('river crop css', JSON.stringify(clip))
+  }
 
   await page.evaluate(() => {
     const api = window.__TINY_TD__
@@ -89,13 +125,33 @@ try {
   await delay(500)
   await page.screenshot({ path: `${OUT}/stacked_tower.png` })
 
+  await page.setViewportSize({ width: 360, height: 780 })
   await page.evaluate(() => {
     const api = window.__TINY_TD__
     api.cameraFocus(3, 4.6, 15.2)
     api.select(2, 7)
   })
-  await delay(250)
+  await delay(350)
+  const boxes = await page.evaluate(() => {
+    const card = document.querySelector('#card')?.getBoundingClientRect()
+    const buttons = [...document.querySelectorAll('#tray button')].map((button) => {
+      const rect = button.getBoundingClientRect()
+      return {
+        id: button.dataset.part,
+        text: button.innerText.replace(/\s+/g, ' '),
+        overflow: [...button.querySelectorAll('span')].some((span) => span.scrollWidth > span.clientWidth + 1),
+        thumb: (button.querySelector('.thumb')?.naturalWidth ?? 0) > 8,
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        r: Math.round(rect.right),
+        b: Math.round(rect.bottom),
+      }
+    })
+    return { card: card && { x: card.x, y: card.y, r: card.right, b: card.bottom, w: card.width }, buttons }
+  })
+  console.log('panel', JSON.stringify(boxes))
   await page.screenshot({ path: `${OUT}/build_panel.png` })
+  await page.setViewportSize({ width: 390, height: 844 })
 
   await page.evaluate(() => {
     window.__TINY_TD__.retry()

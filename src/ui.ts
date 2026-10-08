@@ -1,8 +1,9 @@
-import { asset } from './assets'
+import { asset, pieceThumbnail } from './assets'
 
 export interface ActionButton {
   id: string
   label: string
+  effect: string
   detail?: string
   cost: string
   enabled: boolean
@@ -61,22 +62,27 @@ export class Hud {
   private loadingText: HTMLElement
   private signature = ''
   private gold = -1
+  private actions: ActionButton[] = []
+  private focusedId: string | null = null
+  private holdTimer = 0
+  private suppressClick = false
+  private muteIcon: HTMLImageElement
 
   constructor(app: HTMLElement) {
     app.innerHTML = `
       <div id="hud">
         <header id="top">
-          <div class="pill gold" id="gold"><img alt="" src="${asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')}" /><span>0</span></div>
-          <div class="pill wave" id="wave"><img alt="" src="${asset('assets/ui/ui-pack/PNG/Extra/Double/icon_play_dark.png')}" /><span>1/9</span></div>
-          <div class="pill pets" id="pets"><img alt="" src="${asset('assets/ui/ui-pack/PNG/Green/Double/star.png')}" /><span>5</span></div>
-          <button type="button" id="mute" class="round" aria-label="Sound">Sound</button>
+          <div class="pill gold" id="gold"><img alt="" src="${asset('assets/icons/coin.png')}" /><span>0</span></div>
+          <div class="pill wave" id="wave"><img alt="" src="${asset('assets/icons/flag.png')}" /><span>1/9</span></div>
+          <div class="pill pets" id="pets"><img alt="" src="${asset('assets/icons/heart.png')}" /><span>5</span></div>
+          <button type="button" id="mute" class="round" aria-label="Sound"><img alt="" src="${asset('assets/icons/audio-on.png')}" /></button>
         </header>
         <div id="dock">
           <p id="hint"></p>
           <section id="card" hidden>
             <h2 id="card-title"></h2>
-            <p id="card-blurb"></p>
             <p id="card-stats"></p>
+            <p id="card-blurb" hidden></p>
             <div id="tray"></div>
           </section>
           <div id="actions">
@@ -87,7 +93,7 @@ export class Hud {
       </div>
       <div id="end" hidden>
         <div class="card end-card">
-          <img id="end-icon" alt="" src="${asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')}" />
+          <img id="end-icon" alt="" src="${asset('assets/icons/heart.png')}" />
           <h1 id="end-title"></h1>
           <p id="end-detail"></p>
           <button type="button" id="retry" class="btn green">Retry</button>
@@ -103,6 +109,7 @@ export class Hud {
     this.waveEl = this.need('#wave span')
     this.petsEl = this.need('#pets span')
     this.muteEl = this.need('#mute') as HTMLButtonElement
+    this.muteIcon = this.need('#mute img') as HTMLImageElement
     this.speedEl = this.need('#speed') as HTMLButtonElement
     this.startEl = this.need('#start') as HTMLButtonElement
     this.hintEl = this.need('#hint')
@@ -122,10 +129,39 @@ export class Hud {
     this.startEl.addEventListener('click', () => this.onStart())
     this.muteEl.addEventListener('click', () => this.onMute())
     this.need('#retry').addEventListener('click', () => this.onRetry())
+    this.trayEl.addEventListener('pointerdown', (event) => {
+      const button = (event.target as HTMLElement).closest('button')
+      const id = button?.dataset.part
+      if (!id) return
+      window.clearTimeout(this.holdTimer)
+      this.holdTimer = window.setTimeout(() => {
+        this.suppressClick = true
+        this.focusedId = id
+        this.showFocused()
+      }, 420)
+    })
+    const cancelHold = () => window.clearTimeout(this.holdTimer)
+    this.trayEl.addEventListener('pointerup', cancelHold)
+    this.trayEl.addEventListener('pointercancel', cancelHold)
+    this.trayEl.addEventListener('pointerleave', cancelHold)
     this.trayEl.addEventListener('click', (event) => {
+      if (this.suppressClick) {
+        this.suppressClick = false
+        event.preventDefault()
+        return
+      }
       const button = (event.target as HTMLElement).closest('button')
       const id = button?.dataset.part
       if (id) this.onAction(id)
+    })
+  }
+
+  private showFocused(): void {
+    const action = this.actions.find((item) => item.id === this.focusedId)
+    this.blurbEl.hidden = !action?.detail
+    this.blurbEl.textContent = action?.detail ?? ''
+    this.trayEl.querySelectorAll('button').forEach((button) => {
+      button.classList.toggle('hot', button.dataset.part === this.focusedId)
     })
   }
 
@@ -144,7 +180,7 @@ export class Hud {
     const coin = document.createElement('img')
     coin.alt = ''
     coin.className = 'fly-coin'
-    coin.src = asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')
+    coin.src = asset('assets/icons/coin.png')
     this.root.appendChild(coin)
     const dest = pill.getBoundingClientRect()
     const dx = dest.left + dest.width * 0.35
@@ -176,7 +212,8 @@ export class Hud {
     }
     this.waveEl.textContent = state.waveLabel.replace(/^Wave\s+/i, '')
     this.petsEl.textContent = `${state.pets}/${state.petMax}`
-    this.muteEl.textContent = state.muted ? 'Muted' : 'Sound'
+    this.muteIcon.src = asset(state.muted ? 'assets/icons/audio-off.png' : 'assets/icons/audio-on.png')
+    this.muteEl.setAttribute('aria-label', state.muted ? 'Muted' : 'Sound')
     this.muteEl.setAttribute('aria-pressed', state.muted ? 'true' : 'false')
     this.speedEl.textContent = `${state.speed}×`
     this.speedEl.classList.toggle('pressed', state.speed > 1)
@@ -190,21 +227,29 @@ export class Hud {
     if (!state.selection) {
       this.cardEl.hidden = true
       this.signature = ''
+      this.focusedId = null
+      this.actions = []
     } else {
       this.cardEl.hidden = false
       this.titleEl.textContent = state.selection.title
-      this.blurbEl.textContent = state.selection.blurb
       this.statsEl.textContent = state.selection.stats
+      this.actions = state.selection.actions
       const sig = state.selection.actions.map((action) => action.id).join('|')
       if (sig !== this.signature) {
         this.signature = sig
+        this.focusedId = null
         this.trayEl.innerHTML = ''
+        const coin = asset('assets/icons/coin.png')
         for (const action of state.selection.actions) {
           const button = document.createElement('button')
           button.type = 'button'
           button.dataset.part = action.id
           button.className = `piece ${action.tone}`
-          button.innerHTML = `<span class="piece-name">${action.label}</span><span class="piece-detail">${action.detail ?? ''}</span><span class="piece-cost">${action.cost}</span>`
+          const thumb = pieceThumbnail(action.id)
+          const art = thumb
+            ? `<img class="thumb" alt="" src="${thumb}" />`
+            : `<img class="thumb fallback" alt="" src="${coin}" />`
+          button.innerHTML = `${art}<span class="piece-name">${action.label}</span><span class="piece-effect">${action.effect}</span><span class="piece-cost"><img class="coin" alt="" src="${coin}" /><span class="cost-num">${action.cost}</span></span>`
           this.trayEl.appendChild(button)
         }
       }
@@ -213,10 +258,12 @@ export class Hud {
         const button = buttons[index] as HTMLButtonElement | undefined
         if (!button) return
         button.setAttribute('aria-disabled', action.enabled ? 'false' : 'true')
-        const cost = button.querySelector('.piece-cost')
+        const cost = button.querySelector('.cost-num')
         if (cost) cost.textContent = action.cost
         button.classList.toggle('off', !action.enabled)
+        button.classList.toggle('hot', action.id === this.focusedId)
       })
+      this.showFocused()
     }
 
     if (state.end) {
@@ -225,9 +272,7 @@ export class Hud {
       this.endTitle.textContent = state.end.title
       this.endDetail.textContent = state.end.detail
       this.endIcon.src = asset(
-        state.end.kind === 'win'
-          ? 'assets/ui/ui-pack/PNG/Yellow/Double/star.png'
-          : 'assets/ui/ui-pack/PNG/Red/Double/icon_cross.png',
+        state.end.kind === 'win' ? 'assets/icons/heart.png' : 'assets/ui/ui-pack/PNG/Red/Double/icon_cross.png',
       )
     } else {
       this.endEl.hidden = true

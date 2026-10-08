@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { spawnModel } from './assets'
+import { contactShadow, spawnModel } from './assets'
 import { COLS, ROWS } from './config'
 import { HINT_CELL, PATH, type PathTile, validatePath, waypoints, type XZ } from './pathing'
 
@@ -114,6 +114,10 @@ export function buildMap(): BuiltMap {
     mesh.position.set(cell.x, 0, cell.z)
     mesh.rotation.y = cell.rot * (Math.PI / 2)
     if (cell.model.includes('river')) mesh.add(makeWater(cell.model.includes('bridge'), waterMaps))
+    if (/tree|rock|hill|crystal/.test(cell.model)) {
+      const wide = cell.model.includes('double') || cell.model.includes('crystal')
+      mesh.add(contactShadow(wide ? 0.58 : 0.42))
+    }
     group.add(mesh)
 
     const pick = new THREE.Mesh(pickGeo, pickMat)
@@ -142,23 +146,23 @@ export function buildMap(): BuiltMap {
 
 function waveCanvas(): HTMLCanvasElement {
   const canvas = document.createElement('canvas')
-  canvas.width = 128
-  canvas.height = 64
+  canvas.width = 256
+  canvas.height = 128
   const ctx = canvas.getContext('2d')
   if (!ctx) return canvas
-  const sky = ctx.createLinearGradient(0, 0, 0, 64)
-  sky.addColorStop(0, 'rgba(186, 236, 255, 0.15)')
-  sky.addColorStop(0.5, 'rgba(120, 206, 236, 0.55)')
-  sky.addColorStop(1, 'rgba(70, 170, 214, 0.2)')
+  const sky = ctx.createLinearGradient(0, 0, 0, 128)
+  sky.addColorStop(0, '#8ad8f4')
+  sky.addColorStop(0.45, '#3eafdc')
+  sky.addColorStop(1, '#6ecff0')
   ctx.fillStyle = sky
-  ctx.fillRect(0, 0, 128, 64)
-  ctx.strokeStyle = 'rgba(244, 253, 255, 0.75)'
-  ctx.lineWidth = 4
+  ctx.fillRect(0, 0, 256, 128)
   ctx.lineCap = 'round'
-  for (let row = 0; row < 3; row++) {
+  ctx.lineWidth = 3
+  for (let row = 0; row < 5; row++) {
+    ctx.strokeStyle = row % 2 === 0 ? 'rgba(255, 255, 255, 0.55)' : 'rgba(18, 96, 140, 0.28)'
     ctx.beginPath()
-    for (let x = 0; x <= 128; x += 4) {
-      const y = 16 + row * 16 + Math.sin(x * 0.09 + row) * 3
+    for (let x = 0; x <= 256; x += 3) {
+      const y = 18 + row * 20 + Math.sin(x * 0.045 + row * 1.3) * 4
       if (x === 0) ctx.moveTo(x, y)
       else ctx.lineTo(x, y)
     }
@@ -213,12 +217,10 @@ function makeWater(bridge: boolean, bucket: THREE.Texture[]): THREE.Group {
   const [waves, foamTex] = waterTextures()
   if (!bucket.includes(waves)) bucket.push(waves, foamTex)
   const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(bridge ? 0.46 : 0.58, 1.02),
+    new THREE.PlaneGeometry(bridge ? 0.74 : 0.92, 1.05),
     new THREE.MeshBasicMaterial({
       map: waves,
-      transparent: true,
-      opacity: bridge ? 0.4 : 0.5,
-      depthWrite: false,
+      depthWrite: true,
     }),
   )
   water.rotation.x = -Math.PI / 2
@@ -246,28 +248,28 @@ function makeWater(bridge: boolean, bucket: THREE.Texture[]): THREE.Group {
 
 function makeIsland(): THREE.Group {
   const group = new THREE.Group()
-  const dirt = new THREE.MeshLambertMaterial({ color: 0xc4895a })
-  const rock = new THREE.MeshLambertMaterial({ color: 0x8a7364 })
-  const soil = new THREE.MeshLambertMaterial({ color: 0x6e5344 })
-  const slab = new THREE.Mesh(new THREE.BoxGeometry(7.55, 0.46, 11.55), dirt)
-  slab.position.set(3, -0.24, 5)
+  const dirt = new THREE.MeshLambertMaterial({ color: 0xb57a45 })
+  const rock = new THREE.MeshLambertMaterial({ color: 0x7d6558 })
+  const soil = new THREE.MeshLambertMaterial({ color: 0x5c4336 })
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(7.85, 0.62, 11.85), dirt)
+  slab.position.set(3, -0.32, 5)
   slab.castShadow = true
   slab.receiveShadow = true
-  const crust = new THREE.Mesh(new THREE.BoxGeometry(7.15, 0.38, 11.1), rock)
-  crust.position.set(3, -0.58, 5)
+  const crust = new THREE.Mesh(new THREE.BoxGeometry(7.35, 0.42, 11.25), rock)
+  crust.position.set(3, -0.78, 5)
   crust.castShadow = true
   crust.receiveShadow = true
-  const keel = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.42, 9.6), soil)
-  keel.position.set(3, -0.9, 5)
+  const keel = new THREE.Mesh(new THREE.BoxGeometry(6.3, 0.5, 9.7), soil)
+  keel.position.set(3, -1.15, 5)
   keel.castShadow = true
   group.add(slab, crust, keel)
 
   const catcher = new THREE.Mesh(
     new THREE.CircleGeometry(11.5, 48),
-    new THREE.ShadowMaterial({ opacity: 0.22 }),
+    new THREE.ShadowMaterial({ opacity: 0.34 }),
   )
   catcher.rotation.x = -Math.PI / 2
-  catcher.position.set(3, -1.35, 5)
+  catcher.position.set(3, -1.55, 5)
   catcher.receiveShadow = true
   group.add(catcher)
 
