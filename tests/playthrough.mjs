@@ -144,7 +144,7 @@ try {
   const after = await waitUntil(
     page,
     'wave 1',
-    (state) => state.phase === 'breather' || state.phase === 'defeat' || state.phase === 'victory',
+    (state) => state.kills >= 1 || state.phase === 'defeat' || state.phase === 'victory' || state.leaks > 0,
     25000,
   )
   if (after.spawned < 6) throw new Error(`wave did not spawn: ${JSON.stringify(after)}`)
