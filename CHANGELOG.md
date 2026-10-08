@@ -4,11 +4,12 @@ One level, built to feel good in the hand. Levels 2 and 3 stay loadable and show
 
 ## Feel
 
-- Tap a stone pad for a radial build menu: Turret, Cannon, Frost, Ballista. The menu shifts inward so every button stays on a phone screen. Tap a tower to upgrade or sell, with a range ring. Tap elsewhere to cancel.
-- Each upgrade adds a visible stack layer (mid, top, crown) and a short build pop.
-- Meadow waves start within a few seconds, overlap, and can run at 2×. The speed choice is remembered.
-- UFOs and pets are larger, hits flash and wobble, kills burst, and the camera sits closer to the path.
-- Kenney Future on the UI, one rounded button style, a pause menu, and a pointing-hand tutorial with a skip button.
+- Portrait looks down the grass at about 89°, with the path running vertically, so the board fills the gap between the HUD and the bottom bar. At 390×844 that coverage is about 86% of the gap and a scout is about 40 CSS px wide. Wide screens turn the path sideways and still show the whole route and the pen.
+- The build menu is a ring of 64px circles (Turret, Cannon, Frost, Ballista) with a coin pill under each. Upgrade and sell use the same ring. The ring clamps inside the safe area, and a choice you cannot afford is grey.
+- Damage and gold numbers stay on the UFO, in world space, with a dark outline.
+- A shot kicks the barrel and flashes at the muzzle. Cannon and ballista leave a trail. A kill pops a colored burst, debris, and a coin that flies to the gold pill. Shake is capped and only plays for cannon impacts, boss hits, and abductions. A frost hit tints the UFO blue.
+- Pause is a yellow rounded button with two drawn bars. The tutorial hand points at a pad that is on screen, and Skip is a real button.
+- Waves are fewer, larger, and spaced. They auto-advance after a short countdown. Calling early pays gold. The bottom bar is the 1×/2× toggle, one wave button with a countdown ring, and icon chips for the next group. A light defense peaks around 16–18 UFOs; an empty field peaks at 25.
 
 ## Performance
 
@@ -28,7 +29,7 @@ Before, 30 seconds of combat on that build:
 
 After, three Meadow waves in headless Chromium with damage numbers on (`scripts/perf-probe.mjs`, phone-sized viewport, DPR 2):
 
-- Live geometries stayed at 95, textures at 198, and programs at 16 from wave 1 through the wave 4 breather.
+- Live geometries stayed at 95, textures at 198, and programs at 17 from wave 1 through the wave 4 breather. The 17th program is the muzzle-flash sprite, compiled once during warmup.
 - Canvas resizes during play: 0. Shader compiles during play: 0. The only resize is the first layout, before the wave.
 - Texture uploads per second in combat: 0 (max and average). `playUploads` stayed 0.
 - Tier stayed High. No automatic tier change.

@@ -1209,18 +1209,26 @@ export class Game {
     for (let i = 0; i < 3; i++) this.makeRig()
     this.fx.prepare()
     this.fx.burst(0, -30, 0, 0xfff4c4, 4, 1)
-    for (const name of ['weapon-ammo-arrow', 'weapon-ammo-cannonball', 'weapon-ammo-boulder', 'weapon-ammo-bullet']) {
-      const mesh = spawnModel(name)
+    const ammoCounts: Record<string, number> = {
+      'weapon-ammo-arrow': 4,
+      'weapon-ammo-cannonball': 4,
+      'weapon-ammo-boulder': 4,
+      'weapon-ammo-bullet': 8,
+    }
+    for (const [name, count] of Object.entries(ammoCounts)) {
       const ammoScale = name.includes('arrow') ? 0.65 : name.includes('bullet') ? 1.15 : 1.45
-      mesh.scale.setScalar(ammoScale)
-      mesh.visible = false
-      mesh.position.set(0, -30, 0)
-      mesh.userData.ammoName = name
-      this.scene.add(mesh)
-      this.warmupAmmo.push(mesh)
-      const pool = this.ammoPools.get(name) ?? []
-      pool.push(mesh)
-      this.ammoPools.set(name, pool)
+      for (let i = 0; i < count; i++) {
+        const mesh = spawnModel(name)
+        mesh.scale.setScalar(ammoScale)
+        mesh.visible = false
+        mesh.position.set(0, -30, 0)
+        mesh.userData.ammoName = name
+        this.scene.add(mesh)
+        this.warmupAmmo.push(mesh)
+        const pool = this.ammoPools.get(name) ?? []
+        pool.push(mesh)
+        this.ammoPools.set(name, pool)
+      }
     }
   }
 

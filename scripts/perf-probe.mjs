@@ -26,6 +26,7 @@ await page.evaluate(() => {
   api.setTimeScale(8)
   api.startWave()
 })
+await delay(600)
 const samples = []
 const combat = []
 const start = Date.now()
