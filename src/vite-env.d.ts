@@ -69,6 +69,16 @@ interface TinyApi {
   debugSettings: () => void
   debugCoach: (step?: number) => void
   iconUrl: () => string
+  perf: () => {
+    playResizes: number
+    playCompiles: number
+    playUploads: number
+    geometries: number
+    textures: number
+    programs: number
+    uploadsPerSec: number
+  }
+  pause: () => void
 }
 
 interface Window {

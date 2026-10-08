@@ -1,4 +1,5 @@
 import { asset } from './assets'
+import { perf } from './perf'
 import { loadSettings } from './progress'
 
 type SfxName =
@@ -55,6 +56,7 @@ const VOLUME: Record<SfxName, number> = {
   thud: 0.46,
 }
 
+const VOICE_CAP = 10
 const MUTE_KEY = 'tiny-td-muted'
 
 class AudioBus {
@@ -65,12 +67,15 @@ class AudioBus {
   private unlocked = false
   private built = false
   private loading: Promise<void> | null = null
-  private pools = new Map<SfxName, HTMLAudioElement[]>()
-  private cursor = new Map<SfxName, number>()
+  private ctx: AudioContext | null = null
+  private master: GainNode | null = null
+  private musicGain: GainNode | null = null
+  private musicSource: AudioBufferSourceNode | null = null
+  private buffers = new Map<string, AudioBuffer>()
+  private voices: AudioBufferSourceNode[] = []
   private lastLaser = 0
   private lastHit = 0
-  private music: HTMLAudioElement | null = null
-  private readonly blobs = new Map<string, Promise<string>>()
+  private readonly fetches = new Map<string, Promise<AudioBuffer>>()
 
   constructor() {
     const settings = loadSettings()
@@ -79,24 +84,38 @@ class AudioBus {
     this.muted = !this.sound && !this.musicOn
   }
 
-  /** One network fetch per file. Pool elements play the cached blob and never restart a download. */
-  private blobUrl(path: string): Promise<string> {
+  /** One network fetch and one decode per file. */
+  private buffer(path: string): Promise<AudioBuffer> {
     const url = asset(path)
-    let pending = this.blobs.get(url)
+    let pending = this.fetches.get(url)
     if (!pending) {
       pending = fetch(url)
         .then((res) => {
           if (!res.ok) throw new Error(`audio ${res.status}`)
-          return res.blob()
+          return res.arrayBuffer()
         })
-        .then((blob) => URL.createObjectURL(blob))
+        .then((bytes) => this.context().decodeAudioData(bytes.slice(0)))
         .catch((error) => {
-          this.blobs.delete(url)
+          this.fetches.delete(url)
           throw error
         })
-      this.blobs.set(url, pending)
+      this.fetches.set(url, pending)
     }
     return pending
+  }
+
+  private context(): AudioContext {
+    if (!this.ctx) {
+      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      this.ctx = new Ctx()
+      this.master = this.ctx.createGain()
+      this.master.gain.value = 1
+      this.master.connect(this.ctx.destination)
+      this.musicGain = this.ctx.createGain()
+      this.musicGain.gain.value = 0.28
+      this.musicGain.connect(this.master)
+    }
+    return this.ctx
   }
 
   private ensure(): Promise<void> {
@@ -114,46 +133,45 @@ class AudioBus {
   }
 
   private async build(): Promise<void> {
+    this.context()
     const names = Object.keys(FILES) as Array<SfxName | 'music'>
-    const urls = await Promise.all(names.map((name) => this.blobUrl(FILES[name])))
-    const byName = new Map<string, string>()
-    names.forEach((name, index) => byName.set(name, urls[index]))
-    for (const name of Object.keys(VOLUME) as SfxName[]) {
-      const size = name === 'laser' || name === 'hit' ? 4 : 2
-      const src = byName.get(name)
-      if (!src) continue
-      const pool: HTMLAudioElement[] = []
-      for (let i = 0; i < size; i++) {
-        const el = new Audio()
-        el.preload = 'auto'
-        el.src = src
-        pool.push(el)
-      }
-      this.pools.set(name, pool)
-      this.cursor.set(name, 0)
-    }
-    const musicSrc = byName.get('music')
-    if (musicSrc) {
-      this.music = new Audio()
-      this.music.preload = 'auto'
-      this.music.src = musicSrc
-      this.music.loop = true
-      this.music.volume = 0.28
-    }
+    const buffers = await Promise.all(names.map((name) => this.buffer(FILES[name])))
+    names.forEach((name, index) => this.buffers.set(name, buffers[index]))
   }
 
   unlock(): void {
     const first = !this.unlocked
     this.unlocked = true
+    const ctx = this.context()
+    void ctx.resume()
     void this.ensure().then(() => {
       if (first && this.built && this.musicOn) this.startMusic()
     })
   }
 
   private startMusic(): void {
-    if (!this.music || !this.musicOn) return
-    this.music.volume = 0.28
-    void this.music.play().catch(() => {})
+    const ctx = this.ctx
+    const buffer = this.buffers.get('music')
+    if (!ctx || !buffer || !this.musicOn || !this.musicGain) return
+    this.stopMusic()
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    source.loop = true
+    source.connect(this.musicGain)
+    source.start()
+    this.musicSource = source
+    this.musicGain.gain.value = 0.28
+  }
+
+  private stopMusic(): void {
+    if (!this.musicSource) return
+    try {
+      this.musicSource.stop()
+    } catch {
+      /* already stopped */
+    }
+    this.musicSource.disconnect()
+    this.musicSource = null
   }
 
   private remember(): void {
@@ -167,8 +185,8 @@ class AudioBus {
     this.remember()
     const sync = () => {
       if (!this.built) return
-      if (!this.musicOn) this.music?.pause()
-      else if (this.unlocked) this.startMusic()
+      if (!this.musicOn) this.stopMusic()
+      else if (this.unlocked && !this.musicSource) this.startMusic()
     }
     if (this.built) sync()
     else if (this.loading) void this.loading.then(sync)
@@ -180,7 +198,7 @@ class AudioBus {
     this.musicOn = !turningOff
     this.remember()
     if (this.built) {
-      if (turningOff) this.music?.pause()
+      if (turningOff) this.stopMusic()
       else if (this.unlocked) this.startMusic()
     } else if (!turningOff && this.loading) {
       void this.loading.then(() => {
@@ -191,8 +209,8 @@ class AudioBus {
   }
 
   duck(forJingle: boolean): void {
-    if (!this.music || !this.musicOn) return
-    this.music.volume = forJingle ? 0.08 : 0.28
+    if (!this.musicGain || !this.musicOn) return
+    this.musicGain.gain.value = forJingle ? 0.08 : 0.28
   }
 
   play(name: SfxName): void {
@@ -212,20 +230,33 @@ class AudioBus {
     if (name === 'hit' && now - this.lastHit < 50) return
     if (name === 'laser') this.lastLaser = now
     if (name === 'hit') this.lastHit = now
-    const pool = this.pools.get(name)
-    if (!pool) return
-    const index = this.cursor.get(name) ?? 0
-    this.cursor.set(name, (index + 1) % pool.length)
-    const el = pool[index]
-    el.volume = VOLUME[name]
-    if (el.readyState >= 1) {
+    const ctx = this.ctx
+    const buffer = this.buffers.get(name)
+    const master = this.master
+    if (!ctx || !buffer || !master) return
+    if (this.voices.length >= VOICE_CAP) {
+      const oldest = this.voices.shift()
       try {
-        el.currentTime = 0
+        oldest?.stop()
       } catch {
-        /* not seekable yet */
+        /* already ended */
       }
     }
-    void el.play().catch(() => {})
+    const gain = ctx.createGain()
+    gain.gain.value = VOLUME[name]
+    gain.connect(master)
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    source.connect(gain)
+    source.onended = () => {
+      const index = this.voices.indexOf(source)
+      if (index >= 0) this.voices.splice(index, 1)
+      source.disconnect()
+      gain.disconnect()
+    }
+    source.start()
+    this.voices.push(source)
+    perf.noteSound()
   }
 }
 

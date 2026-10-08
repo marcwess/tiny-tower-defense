@@ -2,7 +2,7 @@
 
 export const COLS = 7
 export const ROWS = 11
-export const START_GOLD = 120
+export const START_GOLD = 160
 export const PET_COUNT = 5
 export const SELL_RATIO = 0.5
 export const MAX_MIDDLES = 3
@@ -39,7 +39,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   ballista: {
     label: 'Ballista',
     blurb: 'Pierce shot. Strong into armor.',
-    cost: 48,
+    cost: 74,
     model: 'weapon-ballista',
     ammo: 'weapon-ammo-arrow',
     damage: 18,
@@ -56,7 +56,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   cannon: {
     label: 'Cannon',
     blurb: 'Splash shell. Great into a swarm.',
-    cost: 58,
+    cost: 80,
     model: 'weapon-cannon',
     ammo: 'weapon-ammo-cannonball',
     damage: 22,
@@ -71,9 +71,9 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     sfx: 'cannon',
   },
   catapult: {
-    label: 'Catapult',
-    blurb: 'Heavy lob that slows whatever it hits.',
-    cost: 52,
+    label: 'Frost',
+    blurb: 'Slow lob. Strong into scouts.',
+    cost: 68,
     model: 'weapon-catapult',
     ammo: 'weapon-ammo-boulder',
     damage: 28,
@@ -90,7 +90,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   turret: {
     label: 'Turret',
     blurb: 'Fast bullets. Breaks shields and catches scouts.',
-    cost: 36,
+    cost: 56,
     model: 'weapon-turret',
     ammo: 'weapon-ammo-bullet',
     damage: 7,
@@ -119,7 +119,7 @@ export const ROOFS: Record<RoofId, { label: string; blurb: string; cost: number;
 }
 
 export const BASE_COST = 40
-export const UPGRADE_COST = [40, 72, 110]
+export const UPGRADE_COST = [40, 70, 100]
 
 export interface EnemyDef {
   label: string
@@ -235,6 +235,8 @@ export interface WaveGroup {
   /** 0–1, enter this far along the path. */
   entry?: number
   hpMul?: number
+  /** Seconds to wait before this group, meadow extraction crews use it. */
+  delay?: number
 }
 
 export interface WaveDef {
@@ -314,7 +316,7 @@ export interface Matchup {
 
 /** About 2× when the shot matches the UFO. Armor and intact shields soak the rest. */
 export function matchup(kind: EnemyKind, shot: ShotProfile): Matchup {
-  const frost = shot.roof === 'a'
+  const frost = shot.roof === 'a' || shot.weapon === 'catapult'
   const blast = shot.roof === 'b' || shot.splash >= 0.55
   const hex = shot.roof === 'c'
   const rapid = shot.weapon === 'turret'
@@ -437,9 +439,9 @@ export function towerStats(
   weapon: WeaponId | null,
   tier = 0,
 ): TowerStats {
-  let range = BASE_RANGE
-  let rate = 1
-  let dmgMul = 1 + tier * 0.18
+  let range = BASE_RANGE + tier * 0.14
+  let rate = 1 - tier * 0.07
+  let dmgMul = 1 + tier * 0.22
   let splashAdd = 0
   let slow = 0
   let shieldMul = 1

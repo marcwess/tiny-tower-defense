@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { perf } from './perf'
 
 interface Particle {
   life: number
@@ -16,9 +17,6 @@ interface Particle {
 
 interface Popup {
   sprite: THREE.Sprite
-  canvas: HTMLCanvasElement
-  ctx: CanvasRenderingContext2D
-  tex: THREE.CanvasTexture
   life: number
   max: number
   vy: number
@@ -39,9 +37,16 @@ interface Ring {
   max: number
 }
 
+interface Flash {
+  sprite: THREE.Sprite
+  life: number
+  max: number
+  grow: number
+}
+
 const MAX = 420
-const POP_W = 1024
-const POP_H = 256
+const POP_W = 256
+const POP_H = 64
 
 export class Fx {
   private parts: Particle[] = []
@@ -63,6 +68,11 @@ export class Fx {
   private ringGeo: THREE.RingGeometry
   private chunkGeo: THREE.BoxGeometry
   private ringMat: THREE.MeshBasicMaterial
+  private readonly scratchColor = new THREE.Color()
+  private readonly glyphs = new Map<string, THREE.CanvasTexture>()
+  private partFree: Particle[] = []
+  private flashes: Flash[] = []
+  private flashCursor = 0
 
   constructor(private scene: THREE.Scene) {
     const geo = new THREE.BufferGeometry()
@@ -108,47 +118,197 @@ export class Fx {
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
     })
+    const flashBase = new THREE.SpriteMaterial({
+      color: 0xfff4c4,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+    for (let i = 0; i < 10; i++) {
+      const sprite = new THREE.Sprite(flashBase.clone())
+      sprite.visible = false
+      sprite.scale.setScalar(0.2)
+      sprite.position.set(0, -40, 0)
+      scene.add(sprite)
+      this.flashes.push({ sprite, life: 0, max: 0.12, grow: 0.6 })
+    }
+
+    for (let i = 0; i < MAX; i++) {
+      this.partFree.push({
+        life: 0,
+        max: 1,
+        x: 0,
+        y: 0,
+        z: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        r: 1,
+        g: 1,
+        b: 1,
+      })
+    }
+  }
+
+  /** Bake the strings combat actually prints so the first shot does not upload a texture. */
+  prepare(): void {
+    const gold = '#ffe08a'
+    const white = '#fff6ea'
+    const green = '#b6ff8a'
+    const saved = '#b8ffb0'
+    const lost = '#ffb0a8'
+    const sell = '#fff1b8'
+    for (let n = 1; n <= 160; n++) this.glyph(String(n), white)
+    for (const reward of [2, 4, 7, 9, 36]) this.glyph(`+${reward}`, gold)
+    for (const cost of [56, 68, 74, 80]) {
+      let spent = cost
+      this.glyph(`+${Math.floor(spent * 0.5)}`, sell)
+      for (const add of [40, 70, 100]) {
+        spent += add
+        this.glyph(`+${Math.floor(spent * 0.5)}`, sell)
+      }
+    }
+    this.glyph('Effective!', green)
+    this.glyph('Saved!', saved)
+    this.glyph('Lost!', lost)
+  }
+
+  /**
+   * Upload every baked glyph and put one chunk, ring, and popup on screen
+   * so the warmup frame owns their geometry. Call the returned function after that frame.
+   */
+  prime(renderer: THREE.WebGLRenderer): () => void {
+    this.prepare()
+    for (const tex of this.glyphs.values()) {
+      renderer.initTexture(tex)
+      tex.needsUpdate = false
+    }
+    const chunk = this.takeChunk(0xfff2c4)
+    chunk.mesh.position.set(2, 0.5, 6)
+    chunk.mesh.frustumCulled = false
+    const ring = this.ringFree.pop() ?? this.makeRing()
+    ring.mesh.visible = true
+    ring.mesh.position.set(2.4, 0.28, 6)
+    ring.mesh.frustumCulled = false
+    const popup = this.takePopup()
+    if (popup) {
+      const mat = popup.sprite.material as THREE.SpriteMaterial
+      mat.map = this.glyph('12', '#fff6ea')
+      popup.sprite.visible = true
+      popup.sprite.position.set(2, 1.1, 6)
+      popup.sprite.frustumCulled = false
+    }
+    const flash = this.flashes[0]
+    flash.sprite.visible = true
+    flash.sprite.position.set(2.6, 0.8, 6)
+    return () => {
+      this.parkChunk(chunk)
+      this.parkRing(ring)
+      if (popup) this.parkPopup(popup)
+      flash.sprite.visible = false
+      flash.sprite.position.set(0, -40, 0)
+    }
+  }
+
+  /** A short muzzle spark. Slots and materials are created up front. */
+  flash(x: number, y: number, z: number, color: number): void {
+    this.playFlash(x, y, z, color, 0.1, 0.55)
+  }
+
+  /** A bigger colored pop when a UFO breaks. */
+  boom(x: number, y: number, z: number, color: number): void {
+    this.playFlash(x, y, z, color, 0.28, 1.25)
+  }
+
+  /** Boss death. Same flash pool, a longer wider pop. */
+  boomBig(x: number, y: number, z: number, color: number): void {
+    this.playFlash(x, y, z, color, 0.45, 2.4)
+  }
+
+  private playFlash(x: number, y: number, z: number, color: number, life: number, grow: number): void {
+    const slot = this.flashes[this.flashCursor % this.flashes.length]
+    this.flashCursor += 1
+    slot.life = life
+    slot.max = life
+    slot.grow = grow
+    slot.sprite.visible = true
+    slot.sprite.position.set(x, y, z)
+    slot.sprite.scale.setScalar(0.08)
+    const mat = slot.sprite.material as THREE.SpriteMaterial
+    mat.color.set(color)
+    mat.opacity = 1
+  }
+
+  /** One pooled spark behind a cannonball or bolt. */
+  trail(x: number, y: number, z: number, color: number): void {
+    const part = this.takePart()
+    if (!part) return
+    const c = this.scratchColor.set(color)
+    part.life = 0.2
+    part.max = 0.2
+    part.x = x
+    part.y = y
+    part.z = z
+    part.vx = 0
+    part.vy = 0.15
+    part.vz = 0
+    part.r = c.r
+    part.g = c.g
+    part.b = c.b
+    this.parts.push(part)
+  }
+
+  private takePart(): Particle | null {
+    const free = this.partFree.pop()
+    if (free) return free
+    if (this.parts.length === 0) return null
+    const oldest = this.parts.pop()
+    return oldest ?? null
   }
 
   burst(x: number, y: number, z: number, color: number, count: number, speed: number): void {
-    const c = new THREE.Color(color)
+    const c = this.scratchColor.set(color)
     for (let i = 0; i < count; i++) {
-      if (this.parts.length >= MAX) this.parts.shift()
+      const part = this.takePart()
+      if (!part) return
       const life = 0.28 + Math.random() * 0.35
-      this.parts.push({
-        life,
-        max: life,
-        x,
-        y,
-        z,
-        vx: (Math.random() - 0.5) * speed,
-        vy: Math.random() * speed * 0.8,
-        vz: (Math.random() - 0.5) * speed,
-        r: c.r,
-        g: c.g,
-        b: c.b,
-      })
+      part.life = life
+      part.max = life
+      part.x = x
+      part.y = y
+      part.z = z
+      part.vx = (Math.random() - 0.5) * speed
+      part.vy = Math.random() * speed * 0.8
+      part.vz = (Math.random() - 0.5) * speed
+      part.r = c.r
+      part.g = c.g
+      part.b = c.b
+      this.parts.push(part)
     }
   }
 
   puff(x: number, y: number, z: number): void {
     for (let i = 0; i < 7; i++) {
-      if (this.smokeParts.length >= 80) this.smokeParts.shift()
+      if (this.smokeParts.length >= 80) {
+        const oldest = this.smokeParts.pop()
+        if (oldest) this.partFree.push(oldest)
+      }
+      const part = this.takePart()
+      if (!part) return
       const life = 0.45 + Math.random() * 0.4
       const gray = 0.45 + Math.random() * 0.35
-      this.smokeParts.push({
-        life,
-        max: life,
-        x: x + (Math.random() - 0.5) * 0.15,
-        y,
-        z: z + (Math.random() - 0.5) * 0.15,
-        vx: (Math.random() - 0.5) * 0.4,
-        vy: 0.35 + Math.random() * 0.7,
-        vz: (Math.random() - 0.5) * 0.4,
-        r: gray,
-        g: gray * 0.96,
-        b: gray * 0.9,
-      })
+      part.life = life
+      part.max = life
+      part.x = x + (Math.random() - 0.5) * 0.15
+      part.y = y
+      part.z = z + (Math.random() - 0.5) * 0.15
+      part.vx = (Math.random() - 0.5) * 0.4
+      part.vy = 0.35 + Math.random() * 0.7
+      part.vz = (Math.random() - 0.5) * 0.4
+      part.r = gray
+      part.g = gray * 0.96
+      part.b = gray * 0.9
+      this.smokeParts.push(part)
     }
   }
 
@@ -182,65 +342,64 @@ export class Fx {
       old.active = false
       return old
     }
+    const mat = new THREE.SpriteMaterial({ transparent: true, depthWrite: false })
+    const sprite = new THREE.Sprite(mat)
+    sprite.visible = false
+    this.scene.add(sprite)
+    return { sprite, life: 0, max: 1, vy: 0.65, active: false }
+  }
+
+  private glyph(text: string, color: string): THREE.CanvasTexture {
+    const key = `${color}|${text}`
+    const cached = this.glyphs.get(key)
+    if (cached) return cached
     const canvas = document.createElement('canvas')
     canvas.width = POP_W
     canvas.height = POP_H
     const ctx = canvas.getContext('2d')
-    if (!ctx) return null
+    if (!ctx) {
+      const empty = new THREE.CanvasTexture(canvas)
+      this.glyphs.set(key, empty)
+      return empty
+    }
+    const fontSize = 28
+    ctx.clearRect(0, 0, POP_W, POP_H)
+    ctx.font = `400 ${fontSize}px "Kenney Future", sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.lineJoin = 'round'
+    ctx.lineWidth = 8
+    ctx.strokeStyle = 'rgba(20, 24, 32, 0.88)'
+    ctx.strokeText(text, POP_W / 2, POP_H / 2 + 1)
+    ctx.fillStyle = color
+    ctx.fillText(text, POP_W / 2, POP_H / 2 + 1)
     const tex = new THREE.CanvasTexture(canvas)
     tex.colorSpace = THREE.SRGBColorSpace
     tex.magFilter = THREE.LinearFilter
     tex.minFilter = THREE.LinearFilter
     tex.generateMipmaps = false
-    tex.wrapS = THREE.ClampToEdgeWrapping
-    tex.wrapT = THREE.ClampToEdgeWrapping
-    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false })
-    const sprite = new THREE.Sprite(mat)
-    sprite.visible = false
-    this.scene.add(sprite)
-    return { sprite, canvas, ctx, tex, life: 0, max: 1, vy: 0.65, active: false }
+    tex.needsUpdate = true
+    this.glyphs.set(key, tex)
+    return tex
   }
 
   popup(x: number, y: number, z: number, text: string, color: string, life = 0.9): void {
     const slot = this.takePopup()
     if (!slot) return
-    const fontSize = 72
-    const font = `700 ${fontSize}px "Kenney Bold", "Kenney Future", sans-serif`
-    const ctx = slot.ctx
-    ctx.font = font
-    const measured = Math.ceil(ctx.measureText(text).width)
-    // Kenney Bold's outlines sit outside the em box. Keep the canvas size fixed so the
-    // GL texture is never reallocated (that realloc was the copySubTexture overflow).
-    const stroke = 18
-    const padX = stroke + 48
-    const ascent = Math.ceil(fontSize * 1.65) + stroke
-    const descent = Math.ceil(fontSize * 0.6) + stroke
-    const width = Math.min(POP_W, Math.max(64, measured + padX * 2))
-    const height = Math.min(POP_H, ascent + descent)
-    ctx.clearRect(0, 0, POP_W, POP_H)
-    ctx.font = font
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'alphabetic'
-    ctx.lineJoin = 'round'
-    ctx.miterLimit = 2
-    ctx.lineWidth = stroke
-    ctx.strokeStyle = 'rgba(20, 24, 32, 0.85)'
-    ctx.strokeText(text, width / 2, ascent)
-    ctx.fillStyle = color
-    ctx.fillText(text, width / 2, ascent)
-    slot.tex.offset.set(0, 1 - height / POP_H)
-    slot.tex.repeat.set(width / POP_W, height / POP_H)
-    slot.tex.needsUpdate = true
+    const tex = this.glyph(text, color)
+    const mat = slot.sprite.material as THREE.SpriteMaterial
+    if (mat.map !== tex) mat.map = tex
+    mat.opacity = 1
     slot.sprite.position.set(x, y, z)
-    const worldH = 0.52
-    slot.sprite.scale.set(worldH * (width / height), worldH, 1)
+    const worldH = text.length > 6 ? 0.5 : 0.4
+    slot.sprite.scale.set(worldH * (POP_W / POP_H) * 0.42, worldH, 1)
     slot.sprite.visible = true
-    ;(slot.sprite.material as THREE.SpriteMaterial).opacity = 1
     slot.life = life
     slot.max = life
-    slot.vy = 0.65
+    slot.vy = 0.35
     slot.active = true
     this.popups.push(slot)
+    perf.notePopup()
   }
 
   /**
@@ -275,6 +434,8 @@ export class Fx {
     this.chunks = []
     for (const ring of this.rings) this.parkRing(ring)
     this.rings = []
+    for (const part of this.parts) this.partFree.push(part)
+    for (const part of this.smokeParts) this.partFree.push(part)
     this.parts = []
     this.smokeParts = []
     this.parkPoints(this.positions, this.colors, MAX)
@@ -321,6 +482,8 @@ export class Fx {
       }
     }
     const mesh = new THREE.Mesh(this.chunkGeo, new THREE.MeshLambertMaterial({ color }))
+    mesh.castShadow = false
+    mesh.receiveShadow = false
     this.scene.add(mesh)
     return { mesh, life: 0, max: 1, vy: 0, spin: 0 }
   }
@@ -350,7 +513,12 @@ export class Fx {
       const p = this.parts[i]
       p.life -= dt
       if (p.life <= 0) {
-        this.parts.splice(i, 1)
+        const last = this.parts.pop()
+        if (last && i < this.parts.length) {
+          this.parts[i] = last
+          i += 1
+        }
+        this.partFree.push(p)
         continue
       }
       p.vy -= dt * 2.2
@@ -382,6 +550,19 @@ export class Fx {
       if (popup.life <= 0) {
         this.parkPopup(popup)
         this.popups.splice(i, 1)
+      }
+    }
+    for (const slot of this.flashes) {
+      if (slot.life <= 0) continue
+      slot.life -= dt
+      const k = 1 - slot.life / slot.max
+      const swell = Math.sin(Math.min(1, k) * Math.PI)
+      slot.sprite.scale.setScalar(Math.max(0.04, slot.grow * swell))
+      const mat = slot.sprite.material as THREE.SpriteMaterial
+      mat.opacity = Math.max(0, 1 - k)
+      if (slot.life <= 0) {
+        slot.sprite.visible = false
+        slot.sprite.position.set(0, -40, 0)
       }
     }
 
@@ -439,7 +620,12 @@ export class Fx {
       const p = parts[i]
       p.life -= dt
       if (p.life <= 0) {
-        parts.splice(i, 1)
+        const last = parts.pop()
+        if (last && i < parts.length) {
+          parts[i] = last
+          i += 1
+        }
+        this.partFree.push(p)
         continue
       }
       p.vy += lift * dt
