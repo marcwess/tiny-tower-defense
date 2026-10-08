@@ -123,6 +123,7 @@ const MEADOW_WAVES: WaveDef[] = [
       { kind: 'swarm', count: 3, interval: 2.4 },
       { kind: 'tank', count: 1, interval: 2.4 },
       { kind: 'shield', count: 2, interval: 2.6 },
+      { kind: 'tank', count: 1, interval: 0.2, entry: 0.99, hpMul: 3.2, delay: 36 },
     ],
   },
 ]

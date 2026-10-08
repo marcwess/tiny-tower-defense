@@ -235,6 +235,8 @@ export interface WaveGroup {
   /** 0–1, enter this far along the path. */
   entry?: number
   hpMul?: number
+  /** Seconds to wait before this group, meadow extraction crews use it. */
+  delay?: number
 }
 
 export interface WaveDef {

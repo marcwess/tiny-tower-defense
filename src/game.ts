@@ -1822,6 +1822,7 @@ export class Game {
     this.schedule = []
     let time = this.level.id === 1 ? 0.12 : 0.35
     for (const group of this.level.waves[this.waveIndex].groups) {
+      time += group.delay ?? 0
       for (let i = 0; i < group.count; i++) {
         this.schedule.push({ time, kind: group.kind, entry: group.entry ?? 0, hpMul: group.hpMul ?? 1 })
         time += group.interval
