@@ -73,6 +73,8 @@ try {
 
   const hint = await page.locator('#hint').textContent()
   if (!hint?.toLowerCase().includes('weapon')) throw new Error(`hint missing: ${hint}`)
+  const coach = await page.locator('#coach-text').textContent()
+  if (!coach?.toLowerCase().includes('pad')) throw new Error(`coach missing: ${coach}`)
 
   await page.evaluate(() => window.__TINY_TD__.cameraFocus(2, 7, 11))
   await delay(100)
@@ -326,6 +328,143 @@ try {
   if (finalState.abductions < 1) throw new Error(`mixed defense was never pressured: ${JSON.stringify(finalState)}`)
   if (finalState.rescues < 1) throw new Error(`mixed defense never rescued a pet: ${JSON.stringify(finalState)}`)
   if (finalState.gold > 150) throw new Error(`mixed defense hoarded gold: ${JSON.stringify(finalState)}`)
+
+  function planFromPads(pads) {
+    const [a, b, c, d, e] = pads
+    const step = (pad, part) => [pad[0], pad[1], part]
+    return [
+      step(a, 'base'),
+      step(a, 'turret'),
+      step(a, 'middle-a'),
+      step(b, 'base'),
+      step(b, 'ballista'),
+      step(b, 'middle-c'),
+      step(c, 'base'),
+      step(c, 'cannon'),
+      step(c, 'roof-b'),
+      step(a, 'middle-c'),
+      step(a, 'roof-b'),
+      step(d, 'base'),
+      step(d, 'turret'),
+      step(d, 'middle-a'),
+      step(e, 'base'),
+      step(e, 'catapult'),
+      step(e, 'middle-c'),
+      step(e, 'roof-a'),
+      step(b, 'roof-c'),
+      step(c, 'middle-a'),
+      step(d, 'middle-c'),
+      step(a, 'middle-b'),
+      step(b, 'middle-a'),
+      step(b, 'middle-b'),
+      step(c, 'middle-c'),
+      step(d, 'middle-b'),
+      step(d, 'roof-a'),
+      step(e, 'middle-a'),
+      step(e, 'middle-b'),
+      step(c, 'middle-b'),
+      step(a, 'upgrade'),
+      step(b, 'upgrade'),
+      step(c, 'upgrade'),
+      step(d, 'upgrade'),
+      step(e, 'upgrade'),
+      step(b, 'upgrade'),
+      step(d, 'upgrade'),
+      step(a, 'upgrade'),
+      step(c, 'upgrade'),
+      step(e, 'upgrade'),
+    ]
+  }
+
+  async function finishLevel(levelId) {
+    await page.evaluate((id) => {
+      const api = window.__TINY_TD__
+      api.startLevel(id)
+      api.setTimeScale(14)
+      const hint = api.getState().hint
+      api.buy(hint.x, hint.z, 'base')
+      api.buy(hint.x, hint.z, 'turret')
+      api.buy(hint.x, hint.z, 'middle-a')
+      api.startWave()
+    }, levelId)
+    const oneStart = Date.now()
+    let one = null
+    while (Date.now() - oneStart < 120000) {
+      one = await stateOf(page)
+      if (one?.error) throw new Error(one.error)
+      if (one?.phase === 'victory' || one?.phase === 'defeat') break
+      if (one?.phase === 'breather' || one?.phase === 'ready') {
+        await page.evaluate(() => window.__TINY_TD__.startWave())
+      }
+      await delay(150)
+    }
+    console.log(`level ${levelId} one tower`, JSON.stringify({ ...one, log: undefined }))
+    if (!one || one.phase !== 'defeat') {
+      throw new Error(`level ${levelId} one tower should lose: ${JSON.stringify(one)}`)
+    }
+
+    const pads = one.pads
+    const plan = planFromPads(pads)
+    await page.evaluate(() => {
+      window.__planCursor = 0
+      window.__TINY_TD__.retry()
+      window.__TINY_TD__.setTimeScale(12)
+    })
+    const buyNext = () =>
+      page.evaluate((steps) => {
+        const api = window.__TINY_TD__
+        const cursor = window.__planCursor ?? 0
+        const step = steps[cursor]
+        if (!step) return cursor
+        const [x, z, part] = step
+        if (api.buy(x, z, part)) window.__planCursor = cursor + 1
+        return window.__planCursor
+      }, plan)
+    const started = Date.now()
+    let done = null
+    while (Date.now() - started < 150000) {
+      let bought = false
+      for (let n = 0; n < 8; n++) {
+        const before = await page.evaluate(() => window.__planCursor ?? 0)
+        const after = await buyNext()
+        if (after === before) break
+        bought = true
+      }
+      done = await stateOf(page)
+      if (done?.error) throw new Error(done.error)
+      if (done?.phase === 'victory' || done?.phase === 'defeat') break
+      const cursor = await page.evaluate(() => window.__planCursor ?? 0)
+      if (cursor >= plan.length) {
+        await page.evaluate((spots) => {
+          for (const [x, z] of spots) window.__TINY_TD__.buy(x, z, 'upgrade')
+        }, pads)
+      }
+      if (!bought && (done?.phase === 'ready' || done?.phase === 'breather')) {
+        await page.evaluate(() => window.__TINY_TD__.startWave())
+      }
+      await delay(150)
+    }
+    console.log(`level ${levelId} mixed`, JSON.stringify({ ...done, log: undefined }))
+    if (done?.log) {
+      console.log(`balance level ${levelId}`)
+      console.log('wave | gold | kills | leaks | pets | rescues | abductions | came')
+      for (const row of done.log) {
+        console.log(
+          `${row.wave} | ${row.gold} | ${row.kills} | ${row.leaks} | ${row.pets} | ${row.rescues} | ${row.abductions} | ${row.came}`,
+        )
+      }
+    }
+    if (!done || done.phase !== 'victory') {
+      throw new Error(`level ${levelId} mixed defense lost: ${JSON.stringify(done)}`)
+    }
+    if (done.abductions < 1 || done.rescues < 1) {
+      throw new Error(`level ${levelId} mixed defense skipped rescue: ${JSON.stringify(done)}`)
+    }
+    if (done.gold > 180) throw new Error(`level ${levelId} mixed defense hoarded gold: ${JSON.stringify(done)}`)
+  }
+
+  await finishLevel(2)
+  await finishLevel(3)
 
   if (errors.length) throw new Error(errors.join('\n'))
   console.log('playthrough ok')

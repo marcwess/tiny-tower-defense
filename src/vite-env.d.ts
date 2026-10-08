@@ -19,7 +19,13 @@ interface TinyState {
   stars: number
   carries: number
   fps: number
+  draws: number
   zoom: number
+  level: number
+  pads: number[][]
+  hint: { x: number; z: number }
+  tutor: number
+  tier: string
   log: {
     wave: number
     gold: number
@@ -54,6 +60,11 @@ interface TinyApi {
   debugWin: () => void
   debugLose: () => void
   retry: () => void
+  startLevel: (id: number) => void
+  next: () => void
+  debugTitle: () => void
+  debugSettings: () => void
+  debugCoach: () => void
 }
 
 interface Window {

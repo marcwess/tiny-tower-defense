@@ -495,6 +495,94 @@ try {
   await page.screenshot({ path: `${OUT}/desktop_1280x800.png` })
   await page.screenshot({ path: `${OUT}/desktop_midwave.png` })
 
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.evaluate(() => window.__TINY_TD__.debugTitle())
+  await delay(700)
+  await page.screenshot({ path: `${OUT}/title_portrait.png` })
+  await page.evaluate(() => {
+    localStorage.setItem('tiny-td-stars', JSON.stringify({ 1: 3, 2: 2 }))
+    window.__TINY_TD__.debugTitle()
+  })
+  await delay(400)
+  await page.screenshot({ path: `${OUT}/level_select.png` })
+
+  await page.evaluate(() => {
+    window.__TINY_TD__.startLevel(1)
+    window.__TINY_TD__.debugCoach()
+  })
+  await delay(300)
+  await page.screenshot({ path: `${OUT}/tutorial_hint.png` })
+
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.startLevel(2)
+    const pads = api.getState().pads
+    api.buy(pads[0][0], pads[0][1], 'base')
+    api.buy(pads[0][0], pads[0][1], 'turret')
+    api.buy(pads[1][0], pads[1][1], 'base')
+    api.buy(pads[1][0], pads[1][1], 'ballista')
+    api.startWave()
+    api.deselect()
+  })
+  await delay(1200)
+  await page.evaluate(() => window.__TINY_TD__.setTimeScale(0))
+  await delay(200)
+  await page.screenshot({ path: `${OUT}/level2_midwave.png` })
+
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.startLevel(3)
+    const pads = api.getState().pads
+    api.buy(pads[0][0], pads[0][1], 'base')
+    api.buy(pads[0][0], pads[0][1], 'turret')
+    api.buy(pads[1][0], pads[1][1], 'base')
+    api.buy(pads[1][0], pads[1][1], 'cannon')
+    api.startWave()
+    api.deselect()
+  })
+  await delay(1200)
+  await page.evaluate(() => window.__TINY_TD__.setTimeScale(0))
+  await delay(200)
+  await page.screenshot({ path: `${OUT}/level3_snow.png` })
+
+  await page.evaluate(() => window.__TINY_TD__.debugSettings())
+  await delay(200)
+  await page.screenshot({ path: `${OUT}/settings.png` })
+
+  await page.locator('#sheet-close').click()
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.startLevel(1)
+    api.debugWin()
+  })
+  await delay(250)
+  const nextBox = await page.locator('#next').boundingBox()
+  if (!nextBox || nextBox.width < 40) throw new Error('win card is missing Next')
+  await page.screenshot({ path: `${OUT}/win_next.png` })
+
+  await page.setViewportSize({ width: 320, height: 568 })
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.retry()
+    api.buy(2, 7, 'base')
+    api.buy(2, 7, 'turret')
+    api.startWave()
+    api.deselect()
+    api.setTimeScale(0)
+  })
+  await delay(400)
+  const hudRow = await page.evaluate(() => {
+    const top = document.querySelector('#top')
+    return top ? top.getBoundingClientRect().height : 0
+  })
+  if (hudRow > 56) throw new Error(`HUD wrapped at 320x568: ${hudRow}`)
+  await page.screenshot({ path: `${OUT}/gameplay_320x568.png` })
+
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.evaluate(() => window.__TINY_TD__.debugTitle())
+  await delay(600)
+  await page.screenshot({ path: `${OUT}/desktop_title.png` })
+
   await browser.close()
   console.log('screenshots written to', OUT)
 } finally {

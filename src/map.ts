@@ -1,7 +1,9 @@
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { contactShadow, spawnModel } from './assets'
 import { COLS, ROWS } from './config'
-import { HINT_CELL, PATH, type PathTile, validatePath, waypoints, type XZ } from './pathing'
+import { levelById, type LevelDef } from './levels'
+import { validatePath, waypoints, type PathTile, type XZ } from './pathing'
 
 export type CellKind = 'path' | 'build' | 'block' | 'spawn' | 'goal' | 'pen'
 
@@ -28,63 +30,16 @@ export function cellKey(x: number, z: number): string {
   return `${x},${z}`
 }
 
-interface Paint {
-  x: number
-  z: number
-  model: string
-  rot?: number
-  kind: CellKind
-}
-
-const PAINT: Paint[] = [
-  { x: 0, z: 10, model: 'tile-tree', kind: 'block' },
-  { x: 2, z: 10, model: 'tile-tree-double', kind: 'block' },
-  { x: 4, z: 10, model: 'tile-rock', kind: 'block' },
-  { x: 5, z: 10, model: 'tile-hill', kind: 'block' },
-  { x: 6, z: 10, model: 'tile-tree', kind: 'block' },
-  { x: 0, z: 9, model: 'tile-rock', kind: 'block' },
-  { x: 3, z: 9, model: 'tile-dirt', kind: 'build' },
-  { x: 6, z: 9, model: 'tile-crystal', kind: 'block' },
-  { x: 0, z: 8, model: 'tile-hill', kind: 'block' },
-  { x: 6, z: 8, model: 'tile-tree-double', kind: 'block' },
-  { x: 0, z: 7, model: 'tile-tree', kind: 'block' },
-  { x: 1, z: 7, model: 'tile-rock', kind: 'block' },
-  { x: 6, z: 7, model: 'tile-crystal', kind: 'block' },
-  { x: 0, z: 6, model: 'tile-tree-double', kind: 'block' },
-  { x: 6, z: 6, model: 'tile-hill', kind: 'block' },
-  { x: 0, z: 5, model: 'tile-river-straight', rot: 1, kind: 'block' },
-  { x: 1, z: 5, model: 'tile-river-straight', rot: 1, kind: 'block' },
-  { x: 3, z: 5, model: 'tile-river-straight', rot: 1, kind: 'block' },
-  { x: 4, z: 5, model: 'tile-river-straight', rot: 1, kind: 'block' },
-  { x: 5, z: 5, model: 'tile-river-straight', rot: 1, kind: 'block' },
-  { x: 6, z: 5, model: 'tile-river-straight', rot: 1, kind: 'block' },
-  { x: 0, z: 4, model: 'tile-tree', kind: 'block' },
-  { x: 1, z: 4, model: 'tile-dirt', kind: 'build' },
-  { x: 6, z: 4, model: 'tile-rock', kind: 'block' },
-  { x: 0, z: 3, model: 'tile-crystal', kind: 'block' },
-  { x: 6, z: 3, model: 'tile-tree', kind: 'block' },
-  { x: 0, z: 2, model: 'tile-hill', kind: 'block' },
-  { x: 3, z: 2, model: 'tile-dirt', kind: 'build' },
-  { x: 6, z: 2, model: 'tile-tree-double', kind: 'block' },
-  { x: 0, z: 1, model: 'tile-tree', kind: 'block' },
-  { x: 6, z: 1, model: 'tile-rock', kind: 'block' },
-  { x: 0, z: 0, model: 'tile-tree-double', kind: 'block' },
-  { x: 1, z: 0, model: 'tile', kind: 'pen' },
-  { x: 2, z: 0, model: 'tile', kind: 'pen' },
-  { x: 4, z: 0, model: 'tile', kind: 'pen' },
-  { x: 5, z: 0, model: 'tile-hill', kind: 'block' },
-  { x: 6, z: 0, model: 'tile-tree', kind: 'block' },
-]
-
-export function buildMap(): BuiltMap {
-  validatePath(PATH)
+export function buildMap(level: LevelDef = levelById(1)): BuiltMap {
+  validatePath(level.path)
+  const ground = level.biome === 'snow' ? 'snow-tile' : 'tile'
   const cells = new Map<string, MapCell>()
   for (let z = 0; z < ROWS; z++) {
     for (let x = 0; x < COLS; x++) {
-      cells.set(cellKey(x, z), { x, z, model: 'tile', rot: 0, kind: 'build' })
+      cells.set(cellKey(x, z), { x, z, model: ground, rot: 0, kind: 'build' })
     }
   }
-  for (const paint of PAINT) {
+  for (const paint of level.paint) {
     cells.set(cellKey(paint.x, paint.z), {
       x: paint.x,
       z: paint.z,
@@ -93,8 +48,8 @@ export function buildMap(): BuiltMap {
       kind: paint.kind,
     })
   }
-  PATH.forEach((tile, index) => {
-    const kind: CellKind = index === 0 ? 'spawn' : index === PATH.length - 1 ? 'goal' : 'path'
+  level.path.forEach((tile, index) => {
+    const kind: CellKind = index === 0 ? 'spawn' : index === level.path.length - 1 ? 'goal' : 'path'
     cells.set(cellKey(tile.x, tile.z), { x: tile.x, z: tile.z, model: tile.model, rot: tile.rot, kind })
   })
 
@@ -113,7 +68,11 @@ export function buildMap(): BuiltMap {
     const mesh = spawnModel(cell.model)
     mesh.position.set(cell.x, 0, cell.z)
     mesh.rotation.y = cell.rot * (Math.PI / 2)
-    if (cell.model.includes('river')) mesh.add(makeWater(cell.model.includes('bridge'), waterMaps))
+    if (cell.model.includes('river')) {
+      const water = makeWater(cell.model.includes('bridge'), waterMaps)
+      water.userData.keep = true
+      mesh.add(water)
+    }
     if (/tree|rock|hill|crystal/.test(cell.model)) {
       const wide = cell.model.includes('double') || cell.model.includes('crystal')
       mesh.add(contactShadow(wide ? 0.58 : 0.42))
@@ -124,24 +83,80 @@ export function buildMap(): BuiltMap {
     pick.rotation.x = -Math.PI / 2
     pick.position.set(cell.x, 0.3, cell.z)
     pick.userData.cell = cell
+    pick.visible = false
     group.add(pick)
     picks.push(pick)
   }
 
-  group.add(makeIsland())
+  group.add(makeIsland(level.biome))
   const clouds = makeClouds()
   for (const cloud of clouds) group.add(cloud)
+
+  bakeStatic(group)
 
   return {
     group,
     picks,
     cells,
-    path: PATH,
-    points: waypoints(PATH),
-    hint: HINT_CELL,
+    path: level.path,
+    points: waypoints(level.path),
+    hint: level.hint,
     clouds,
     waterMaps,
   }
+}
+
+/** Merge repeated tiles, trees and rocks that share a material into one draw. */
+function bakeStatic(root: THREE.Object3D): void {
+  root.updateMatrixWorld(true)
+  const hoist: THREE.Object3D[] = []
+  root.traverse((obj) => {
+    if (obj.userData.keep && obj.parent && obj.parent !== root) hoist.push(obj)
+  })
+  for (const obj of hoist) root.attach(obj)
+
+  const buckets = new Map<string, { material: THREE.Material; geos: THREE.BufferGeometry[] }>()
+  const doomed: THREE.Mesh[] = []
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh
+    if (!mesh.isMesh || mesh.userData.keep || mesh.userData.cell) return
+    let skip = false
+    let parent: THREE.Object3D | null = mesh
+    while (parent) {
+      if (parent.userData.keep) {
+        skip = true
+        break
+      }
+      parent = parent.parent
+    }
+    if (skip || !mesh.geometry) return
+    const geom = mesh.geometry.clone()
+    geom.applyMatrix4(mesh.matrixWorld)
+    const material = mesh.material as THREE.Material
+    const key = `${material.uuid}:${mesh.castShadow ? 1 : 0}:${mesh.receiveShadow ? 1 : 0}`
+    const bucket = buckets.get(key) ?? { material, geos: [] }
+    bucket.geos.push(geom)
+    buckets.set(key, bucket)
+    doomed.push(mesh)
+  })
+  for (const mesh of doomed) mesh.parent?.remove(mesh)
+  for (const bucket of buckets.values()) {
+    const merged = mergeGeometries(bucket.geos, false)
+    for (const geom of bucket.geos) geom.dispose()
+    if (!merged) continue
+    const mesh = new THREE.Mesh(merged, bucket.material)
+    mesh.userData.baked = true
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    root.add(mesh)
+  }
+}
+
+export function disposeMap(map: BuiltMap): void {
+  map.group.traverse((obj) => {
+    const mesh = obj as THREE.Mesh
+    if (mesh.isMesh && mesh.userData.baked) mesh.geometry.dispose()
+  })
 }
 
 function waveCanvas(): HTMLCanvasElement {
@@ -246,11 +261,11 @@ function makeWater(bridge: boolean, bucket: THREE.Texture[]): THREE.Group {
   return group
 }
 
-function makeIsland(): THREE.Group {
+function makeIsland(biome: 'grass' | 'snow'): THREE.Group {
   const group = new THREE.Group()
-  const dirt = new THREE.MeshLambertMaterial({ color: 0xb57a45 })
-  const rock = new THREE.MeshLambertMaterial({ color: 0x7d6558 })
-  const soil = new THREE.MeshLambertMaterial({ color: 0x5c4336 })
+  const dirt = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0xd5dde6 : 0xb57a45 })
+  const rock = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0x8ea0b0 : 0x7d6558 })
+  const soil = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0x667684 : 0x5c4336 })
   const slab = new THREE.Mesh(new THREE.BoxGeometry(7.85, 0.62, 11.85), dirt)
   slab.position.set(3, -0.32, 5)
   slab.castShadow = true
@@ -280,7 +295,8 @@ function makeIsland(): THREE.Group {
     [6.6, -0.18, -0.2, 0.62],
   ]
   for (const [x, y, z, s] of rocks) {
-    const rockMesh = spawnModel(s > 0.7 ? 'tile-rock' : 'tile-hill')
+    const rockName = biome === 'snow' ? (s > 0.7 ? 'snow-tile-rock' : 'snow-tile-hill') : s > 0.7 ? 'tile-rock' : 'tile-hill'
+    const rockMesh = spawnModel(rockName)
     rockMesh.position.set(x, y, z)
     rockMesh.scale.setScalar(s)
     rockMesh.rotation.y = x

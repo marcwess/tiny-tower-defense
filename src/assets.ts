@@ -57,16 +57,33 @@ const KIT_MODELS = [
   'enemy-ufo-beam-burst',
 ]
 
+const SNOW_MODELS = [
+  'snow-tile',
+  'snow-tile-straight',
+  'snow-tile-corner-round',
+  'snow-tile-spawn',
+  'snow-tile-end',
+  'snow-tile-tree',
+  'snow-tile-tree-double',
+  'snow-tile-rock',
+  'snow-tile-hill',
+  'snow-tile-crystal',
+  'snow-tile-dirt',
+  'snow-tile-river-straight',
+  'snow-tile-river-bridge',
+]
+
 const PET_MODELS = ['animal-cat', 'animal-bunny', 'animal-dog', 'animal-fox', 'animal-chick']
 
 const templates = new Map<string, THREE.Object3D>()
 const petGltf = new Map<string, GLTF>()
 const petFoot = new Map<string, number>()
-let sharedMat: THREE.MeshLambertMaterial | null = null
+const familyMat = new Map<string, THREE.MeshLambertMaterial>()
 
 export function kitMaterial(): THREE.MeshLambertMaterial {
-  if (!sharedMat) throw new Error('Assets not loaded')
-  return sharedMat
+  const mat = familyMat.get('grass')
+  if (!mat) throw new Error('Assets not loaded')
+  return mat
 }
 
 /**
@@ -142,17 +159,19 @@ function repairRiverUvs(mesh: THREE.Mesh): void {
   geom.dispose()
 }
 
-function adopt(root: THREE.Object3D): void {
+function adopt(root: THREE.Object3D, family: string): void {
   const river = root.name.includes('river')
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh
     if (!mesh.isMesh) return
     const source = mesh.material as THREE.MeshLambertMaterial
-    if (!sharedMat) {
+    let shared = familyMat.get(family)
+    if (!shared) {
       if (source.map) configureAtlas(source.map)
-      sharedMat = new THREE.MeshLambertMaterial({ map: source.map, color: 0xffffff })
+      shared = new THREE.MeshLambertMaterial({ map: source.map, color: 0xffffff })
+      familyMat.set(family, shared)
     }
-    mesh.material = sharedMat
+    mesh.material = shared
     mesh.castShadow = true
     mesh.receiveShadow = true
     if (river || mesh.name.includes('river')) {
@@ -167,6 +186,7 @@ export async function loadAssets(onProgress: (ratio: number) => void): Promise<v
   const loader = new GLTFLoader()
   const jobs: string[] = [
     ...KIT_MODELS.map((name) => KIT + name + '.glb'),
+    ...SNOW_MODELS.map((name) => KIT + name + '.glb'),
     ...PET_MODELS.map((name) => PETS + name + '.glb'),
   ]
   let done = 0
@@ -185,14 +205,14 @@ export async function loadAssets(onProgress: (ratio: number) => void): Promise<v
         const box = new THREE.Box3().setFromObject(gltf.scene)
         petFoot.set(file, -box.min.y)
       } else {
-        adopt(gltf.scene)
+        adopt(gltf.scene, file.startsWith('snow-') ? 'snow' : 'grass')
         templates.set(file, gltf.scene)
       }
       done += 1
       onProgress(done / jobs.length)
     }),
   )
-  if (!sharedMat) throw new Error('Kit colormap missing')
+  if (!familyMat.get('grass') || !familyMat.get('snow')) throw new Error('Kit colormap missing')
 }
 
 function cloneStatic(src: THREE.Object3D): THREE.Object3D {

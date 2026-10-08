@@ -15,7 +15,6 @@ import {
   SELL_RATIO,
   START_GOLD,
   UPGRADE_COST,
-  WAVES,
   WEAPONS,
   clearBonus,
   earlyBonus,
@@ -32,8 +31,10 @@ import {
 } from './config'
 import { Enemy } from './enemies'
 import { Fx } from './fx'
-import { buildMap, cellKey, tickDiorama, type BuiltMap, type MapCell } from './map'
-import { PET_SPOTS, Pet } from './pets'
+import { LEVELS, levelById, type LevelDef } from './levels'
+import { buildMap, cellKey, disposeMap, tickDiorama, type BuiltMap, type MapCell } from './map'
+import { Pet } from './pets'
+import { buzz, levelUnlocked, loadSettings, markTutorial, saveSettings, saveStars, starsFor, tutorialSeen, type Settings } from './progress'
 import { Tower } from './towers'
 import { Hud, type ActionButton, type SelectionView } from './ui'
 
@@ -82,7 +83,17 @@ interface WaveRow {
   came: string
 }
 
-type Phase = 'ready' | 'wave' | 'breather' | 'victory' | 'defeat'
+type Phase = 'title' | 'ready' | 'wave' | 'breather' | 'victory' | 'defeat'
+type Tier = 'low' | 'mid' | 'high'
+
+const COACH = [
+  '',
+  'Tap a pad to build',
+  'Stack a weapon on top',
+  'Weak-to tags matter',
+  'Shoot down a UFO carrying a pet to rescue it',
+  'Call wave early for bonus gold',
+]
 
 const _v = new THREE.Vector3()
 const _aim = new THREE.Vector3()
@@ -129,13 +140,12 @@ const WEAPON_EFFECT: Record<WeaponId, string> = {
   turret: 'Rapid',
 }
 
-function detectQuality(coarse: boolean): { shadows: boolean; shadowMapSize: number; pixelRatio: number } {
+function detectTier(): Tier {
   const nav = navigator as Navigator & { deviceMemory?: number }
   const memory = nav.deviceMemory ?? 8
-  const ratio = window.devicePixelRatio || 1
-  if (memory <= 2) return { shadows: false, shadowMapSize: 0, pixelRatio: 1 }
-  if (memory <= 4) return { shadows: true, shadowMapSize: 512, pixelRatio: Math.min(ratio, coarse ? 1.25 : 1.5) }
-  return { shadows: true, shadowMapSize: 1024, pixelRatio: Math.min(ratio, coarse ? 1.5 : 1.75) }
+  if (memory <= 2) return 'low'
+  if (memory <= 4) return 'mid'
+  return 'high'
 }
 
 function skyTexture(): THREE.CanvasTexture {
@@ -149,6 +159,27 @@ function skyTexture(): THREE.CanvasTexture {
     g.addColorStop(0.42, '#b7e3f8')
     g.addColorStop(0.72, '#f6e2c4')
     g.addColorStop(1, '#f3c99a')
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, 4, 256)
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.magFilter = THREE.LinearFilter
+  tex.minFilter = THREE.LinearFilter
+  return tex
+}
+
+function snowSkyTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas')
+  canvas.width = 4
+  canvas.height = 256
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    const g = ctx.createLinearGradient(0, 0, 0, 256)
+    g.addColorStop(0, '#8eb8dc')
+    g.addColorStop(0.4, '#d5e7f6')
+    g.addColorStop(0.72, '#f4f7fb')
+    g.addColorStop(1, '#e7eef6')
     ctx.fillStyle = g
     ctx.fillRect(0, 0, 4, 256)
   }
@@ -201,7 +232,7 @@ export class Game {
   private rangeMesh: THREE.Mesh
   private hintMarker: THREE.Sprite
   private selected: MapCell | null = null
-  private phase: Phase = 'ready'
+  private phase: Phase = 'title'
   private gold = START_GOLD
   private waveIndex = 0
   private countdown = 0
@@ -218,7 +249,6 @@ export class Game {
   private fps = 60
   private fpsFrames = 0
   private fpsAccum = 0
-  private hint: boolean
   private target = new THREE.Vector3(2.6, 0.2, 4.7)
   private distance = 20.2
   private visualTime = 0
@@ -234,14 +264,33 @@ export class Game {
   private lastGround = new THREE.Vector3()
   private error: string | null = null
   private loopStarted = false
+  private level: LevelDef = levelById(1)
+  private selectedLevel = 1
+  private tutorStep = 0
+  private settings: Settings = loadSettings()
+  private settingsOpen = false
+  private tier: Tier = 'high'
+  private slowAccum = 0
+  private allowDowngrade = true
+  private sun!: THREE.DirectionalLight
+  private hemi!: THREE.HemisphereLight
+  private skyGrass: THREE.Texture
+  private skySnow: THREE.Texture
+  private ammoPools = new Map<string, THREE.Object3D[]>()
+  private freeProjectiles: Projectile[] = []
 
   constructor(
     private app: HTMLElement,
     private hud: Hud,
   ) {
-    const coarse = window.matchMedia('(pointer: coarse)').matches
-    const capture = new URLSearchParams(location.search).has('capture')
-    const quality = detectQuality(coarse)
+    const params = new URLSearchParams(location.search)
+    const capture = params.has('capture')
+    const detected = detectTier()
+    this.tier = this.settings.quality === 'low' ? 'low' : this.settings.quality === 'high' ? 'high' : detected
+    this.allowDowngrade = !capture && !params.has('measure')
+    this.showDamage = this.settings.damage
+    this.skyGrass = skyTexture()
+    this.skySnow = snowSkyTexture()
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,
       alpha: false,
@@ -251,38 +300,30 @@ export class Game {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.02
-    this.renderer.setPixelRatio(quality.pixelRatio)
-    if (quality.shadows) {
-      this.renderer.shadowMap.enabled = true
-      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
-    }
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.camera = new THREE.PerspectiveCamera(52, 1, 0.12, 90)
     this.app.prepend(this.renderer.domElement)
-    this.hint = localStorage.getItem('tiny-td-hint-v1') !== '1'
-    this.showDamage = localStorage.getItem('tiny-td-dmg') !== '0'
 
-    this.scene.background = skyTexture()
+    this.scene.background = this.skyGrass
     this.scene.fog = new THREE.Fog(0xf6e2c8, 42, 82)
     this.scene.add(new THREE.AmbientLight(0xfff1df, 0.3))
-    this.scene.add(new THREE.HemisphereLight(0xfff4e4, 0x5c8644, 0.4))
-    const sun = new THREE.DirectionalLight(0xffd89a, 2.45)
-    sun.position.set(11, 8.2, 6.5)
-    sun.target.position.set(3, 0, 5)
-    if (quality.shadows) {
-      sun.castShadow = true
-      sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize)
-      sun.shadow.camera.near = 0.5
-      sun.shadow.camera.far = 42
-      sun.shadow.camera.left = -11
-      sun.shadow.camera.right = 11
-      sun.shadow.camera.top = 13
-      sun.shadow.camera.bottom = -13
-      sun.shadow.bias = -0.001
-      sun.shadow.normalBias = 0.03
-      sun.shadow.radius = 1.6
-    }
-    this.scene.add(sun)
-    this.scene.add(sun.target)
+    this.hemi = new THREE.HemisphereLight(0xfff4e4, 0x5c8644, 0.4)
+    this.scene.add(this.hemi)
+    this.sun = new THREE.DirectionalLight(0xffd89a, 2.45)
+    this.sun.position.set(11, 8.2, 6.5)
+    this.sun.target.position.set(3, 0, 5)
+    this.sun.shadow.camera.near = 0.5
+    this.sun.shadow.camera.far = 42
+    this.sun.shadow.camera.left = -11
+    this.sun.shadow.camera.right = 11
+    this.sun.shadow.camera.top = 13
+    this.sun.shadow.camera.bottom = -13
+    this.sun.shadow.bias = -0.001
+    this.sun.shadow.normalBias = 0.03
+    this.sun.shadow.radius = 1.6
+    this.scene.add(this.sun)
+    this.scene.add(this.sun.target)
+    this.applyTier(this.tier)
     const rim = new THREE.DirectionalLight(0xffb15a, 0.72)
     rim.position.set(-8, 4.5, 10)
     this.scene.add(rim)
@@ -336,19 +377,58 @@ export class Game {
     renderPieceThumbnails()
     const arrow = await arrowTexture()
     ;(this.hintMarker.material as THREE.SpriteMaterial).map = arrow
-    this.map = buildMap()
-    this.scene.add(this.map.group)
+    const capture = new URLSearchParams(location.search).has('capture')
     this.fx = new Fx(this.scene)
-    this.spawnPets()
+    this.installLevel(levelById(1), capture ? 'play' : 'title')
     this.bindInput()
     this.hud.setLoading(null)
-    this.syncMarker()
-    this.refreshHud()
     this.expose()
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this.renderer.setAnimationLoop(null)
+        return
+      }
+      this.clock.getDelta()
+      this.renderer.setAnimationLoop(() => this.frame())
+    })
     if (!this.loopStarted) {
       this.loopStarted = true
       this.renderer.setAnimationLoop(() => this.frame())
     }
+  }
+
+  private applyTier(tier: Tier): void {
+    this.tier = tier
+    const coarse = window.matchMedia('(pointer: coarse)').matches
+    const ratio = window.devicePixelRatio || 1
+    const pixel =
+      tier === 'low' ? 1 : tier === 'mid' ? Math.min(ratio, coarse ? 1.25 : 1.5) : Math.min(ratio, coarse ? 1.5 : 1.75)
+    const shadows = tier !== 'low'
+    const size = tier === 'high' ? 1024 : 512
+    this.renderer.setPixelRatio(pixel)
+    this.renderer.shadowMap.enabled = shadows
+    this.sun.castShadow = shadows
+    if (shadows) {
+      this.sun.shadow.mapSize.set(size, size)
+      this.sun.shadow.map?.dispose()
+      this.sun.shadow.map = null
+    }
+    if (this.renderer.domElement.isConnected) this.resize()
+  }
+
+  private applyBiome(biome: 'grass' | 'snow'): void {
+    const fog = this.scene.fog as THREE.Fog
+    if (biome === 'snow') {
+      fog.color.set(0xd7e7f4)
+      this.hemi.color.set(0xe8f4ff)
+      this.hemi.groundColor.set(0x7f97a8)
+      this.scene.background = this.skySnow
+      return
+    }
+    fog.color.set(0xf6e2c8)
+    this.hemi.color.set(0xfff4e4)
+    this.hemi.groundColor.set(0x5c8644)
+    this.scene.background = this.skyGrass
   }
 
   private resize(): void {
@@ -414,10 +494,12 @@ export class Game {
     }
     const horiz = Math.cos(this.pitch) * this.distance
     const bob = Math.sin(performance.now() * 0.04) * this.shake
+    const orbit = this.phase === 'title' && !this.userCam ? this.visualTime * 0.18 : 0
+    const azimuth = this.azimuth + orbit
     this.camera.position.set(
-      this.target.x + Math.sin(this.azimuth) * horiz + bob,
+      this.target.x + Math.sin(azimuth) * horiz + bob,
       Math.sin(this.pitch) * this.distance + Math.cos(performance.now() * 0.05) * this.shake,
-      this.target.z + Math.cos(this.azimuth) * horiz,
+      this.target.z + Math.cos(azimuth) * horiz,
     )
     this.camera.lookAt(this.target.x, this.lookY, this.target.z)
   }
@@ -425,6 +507,7 @@ export class Game {
   private bindInput(): void {
     const canvas = this.renderer.domElement
     canvas.addEventListener('contextmenu', (event) => event.preventDefault())
+    canvas.addEventListener('gesturestart', (event) => event.preventDefault())
     canvas.addEventListener('pointerdown', (event) => {
       audio.unlock()
       this.pointers.set(event.pointerId, {
@@ -514,7 +597,7 @@ export class Game {
   }
 
   private selectAt(clientX: number, clientY: number): void {
-    if (this.phase === 'victory' || this.phase === 'defeat') return
+    if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') return
     this.setNdc(clientX, clientY)
     this.raycaster.setFromCamera(this.ndc, this.camera)
     const hits = this.raycaster.intersectObjects(this.map.picks, false)
@@ -526,7 +609,7 @@ export class Game {
   }
 
   private spawnPets(): void {
-    for (const spot of PET_SPOTS) {
+    for (const spot of this.level.pets) {
       const pet = new Pet(spot)
       this.pets.push(pet)
       this.scene.add(pet.group)
@@ -535,6 +618,18 @@ export class Game {
 
   private frame(): void {
     const raw = Math.min(this.clock.getDelta(), 0.1)
+    if (this.allowDowngrade && this.settings.quality === 'auto' && this.tier !== 'low') {
+      if (raw > 0.022) {
+        this.slowAccum += raw
+        if (this.slowAccum >= 3) {
+          this.slowAccum = 0
+          const next: Tier = this.tier === 'high' ? 'mid' : 'low'
+          this.applyTier(next)
+        }
+      } else {
+        this.slowAccum = Math.max(0, this.slowAccum - raw * 0.5)
+      }
+    }
     this.fpsAccum += raw
     this.fpsFrames += 1
     if (this.fpsAccum >= 0.4) {
@@ -591,7 +686,7 @@ export class Game {
     } else {
       this.updateCarries(dt)
     }
-    const threat = this.enemies.some((enemy) => enemy.alive && enemy.pos.z < 2.6)
+    const threat = this.phase === 'title' || this.enemies.some((enemy) => enemy.alive && enemy.pos.z < 2.6)
     for (const pet of this.pets) {
       if (pet.alive || pet.reserved) pet.update(dt)
       if (pet.alive && !pet.reserved) pet.setNervous(threat)
@@ -771,6 +866,8 @@ export class Game {
     this.rescues += 1
     pet.parachute(enemy.pos.x, Math.max(0.8, enemy.pos.y - 0.4), enemy.pos.z)
     audio.play('cheer')
+    buzz('rescue')
+    this.advanceTutor('rescue')
     this.fx.popup(enemy.pos.x, enemy.pos.y + 0.55, enemy.pos.z, 'Saved!', '#b8ffb0', 1.15)
     this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xd8ffe4, 10, 2.2)
     this.shake = Math.max(this.shake, 0.08)
@@ -819,13 +916,12 @@ export class Game {
       target.pos.y + 0.05,
       target.pos.z + target.vel.z * flight * 0.8,
     )
-    const mesh = spawnModel(stats.ammo)
-    const ammoScale = stats.ammo.includes('arrow') ? 0.65 : stats.ammo.includes('bullet') ? 1.15 : 1.45
-    mesh.scale.setScalar(ammoScale)
-    const pos = _v.clone()
+    const mesh = this.takeAmmo(stats.ammo)
+    const reused = this.freeProjectiles.pop()
+    const pos = reused?.pos ?? new THREE.Vector3()
+    const vel = reused?.vel ?? new THREE.Vector3()
+    pos.copy(_v)
     mesh.position.copy(pos)
-    this.scene.add(mesh)
-    const vel = new THREE.Vector3()
     let gravity = 0
     if (stats.arc) {
       const dx = _aim.x - pos.x
@@ -836,10 +932,34 @@ export class Game {
     } else {
       vel.copy(_aim).sub(pos).normalize().multiplyScalar(stats.speed)
     }
-    this.projectiles.push({
+    const shell: Projectile = reused ?? {
       mesh,
       pos,
       vel,
+      gravity: 0,
+      age: 0,
+      life: 0,
+      damage: 0,
+      splash: 0,
+      slow: 0,
+      shieldMul: 1,
+      pierce: 0,
+      weapon: null,
+      roof: null,
+      splashHit: false,
+      homing: true,
+      speed: 0,
+      target: null,
+      hit: new Set(),
+      alive: true,
+    }
+    shell.mesh = mesh
+    shell.pos = pos
+    shell.vel = vel
+    shell.hit.clear()
+    shell.alive = true
+    this.projectiles.push(shell)
+    Object.assign(shell, {
       gravity,
       age: 0,
       life: flight + (stats.arc ? 0.05 : 0.45),
@@ -908,10 +1028,11 @@ export class Game {
       }
     }
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
-      if (!this.projectiles[i].alive) {
-        this.scene.remove(this.projectiles[i].mesh)
-        this.projectiles.splice(i, 1)
-      }
+      const proj = this.projectiles[i]
+      if (proj.alive) continue
+      this.recycleAmmo(proj.mesh)
+      this.freeProjectiles.push(proj)
+      this.projectiles.splice(i, 1)
     }
   }
 
@@ -1002,6 +1123,7 @@ export class Game {
     this.fx.ring(enemy.pos.x, enemy.pos.z, 0xffd27a)
     this.flyCoins(enemy.pos, 3)
     audio.play('boom')
+    buzz('kill')
     this.shake = Math.max(this.shake, enemy.kind === 'boss' ? 0.2 : 0.12)
     const carry = this.carries.find((item) => item.enemy === enemy)
     if (carry) this.rescue(carry)
@@ -1027,12 +1149,13 @@ export class Game {
     this.gold += clearBonus(cleared)
     this.noteWave(cleared)
     this.waveIndex += 1
-    if (this.waveIndex >= WAVES.length) {
+    if (this.waveIndex >= this.level.waves.length) {
       this.win()
       return
     }
     this.phase = 'breather'
     this.countdown = BREATHER_SECONDS
+    this.advanceTutor('breather')
     audio.play('place')
   }
 
@@ -1042,7 +1165,7 @@ export class Game {
 
   private noteWave(waveNumber: number): void {
     if (this.waveLog.some((row) => row.wave === waveNumber)) return
-    const def = WAVES[waveNumber - 1]
+    const def = this.level.waves[waveNumber - 1]
     this.waveLog.push({
       wave: waveNumber,
       gold: this.gold,
@@ -1057,16 +1180,21 @@ export class Game {
 
   startWave(bonus: boolean): void {
     if (this.phase !== 'ready' && this.phase !== 'breather') return
-    if (bonus && this.phase === 'breather' && this.countdown > 0.75) this.gold += earlyBonus(this.waveIndex)
-    this.bannerTitle = this.waveIndex === WAVES.length - 1 ? 'Boss wave' : `Wave ${this.waveIndex + 1}`
-    this.bannerChips = waveChips(WAVES[this.waveIndex])
+    const early = bonus && this.phase === 'breather' && this.countdown > 0.75
+    if (early) {
+      this.gold += earlyBonus(this.waveIndex)
+      this.advanceTutor('early')
+    }
+    this.advanceTutor('wave')
+    this.bannerTitle = this.waveIndex === this.level.waves.length - 1 ? 'Boss wave' : `Wave ${this.waveIndex + 1}`
+    this.bannerChips = waveChips(this.level.waves[this.waveIndex])
     this.bannerT = 2
     this.phase = 'wave'
     this.waveTime = 0
     this.spawnIndex = 0
     this.schedule = []
     let time = 0.35
-    for (const group of WAVES[this.waveIndex].groups) {
+    for (const group of this.level.waves[this.waveIndex].groups) {
       for (let i = 0; i < group.count; i++) {
         this.schedule.push({ time, kind: group.kind, entry: group.entry ?? 0, hpMul: group.hpMul ?? 1 })
         time += group.interval
@@ -1106,7 +1234,7 @@ export class Game {
   }
 
   buy(x: number, z: number, part: string): boolean {
-    if (this.phase === 'victory' || this.phase === 'defeat') return false
+    if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') return false
     const cell = this.map.cells.get(cellKey(x, z))
     if (!cell) return false
     if (part === 'base') return this.placeBase(cell)
@@ -1126,7 +1254,8 @@ export class Game {
     this.towers.push(tower)
     this.scene.add(tower.group)
     this.selected = cell
-    this.dismissHint()
+    this.advanceTutor('base')
+    buzz('build')
     audio.play('place')
     audio.play('thud')
     this.fx.burst(cell.x, 0.3, cell.z, 0xe6d2a8, 12, 2)
@@ -1169,6 +1298,8 @@ export class Game {
       return false
     }
     tower.rebuild(true)
+    if (isWeapon(part)) this.advanceTutor('weapon')
+    buzz('build')
     audio.play(part.startsWith('middle-') || part.startsWith('roof-') ? 'thud' : 'place')
     this.fx.burst(cell.x, 0.8, cell.z, 0xffe7a8, 10, 2.2)
     this.syncSelection()
@@ -1185,6 +1316,7 @@ export class Game {
     tower.spent += cost
     tower.tier += 1
     tower.rebuild(true)
+    buzz('build')
     audio.play('thud')
     this.fx.burst(cell.x, 0.9, cell.z, 0xffd27a, 8, 2)
     this.syncSelection()
@@ -1211,15 +1343,8 @@ export class Game {
     return this.towers.find((tower) => tower.x === x && tower.z === z)
   }
 
-  private dismissHint(): void {
-    if (!this.hint && !this.hintMarker.visible) return
-    this.hint = false
-    this.hintMarker.visible = false
-    localStorage.setItem('tiny-td-hint-v1', '1')
-  }
-
   private syncMarker(): void {
-    const show = this.hint && this.towers.length === 0
+    const show = this.tutorStep === 1 && this.towers.length === 0
     this.hintMarker.visible = show
     if (show) this.hintMarker.position.set(this.map.hint.x, 1.15, this.map.hint.z)
   }
@@ -1372,10 +1497,10 @@ export class Game {
       startLabel = `${this.enemies.length} UFOs`
     } else if (this.phase === 'victory') startLabel = 'Clear'
     else if (this.phase === 'defeat') startLabel = 'Over'
-    const waveNo = Math.min(this.waveIndex + 1, WAVES.length)
-    const preview = playing && this.waveIndex < WAVES.length ? waveChips(WAVES[this.waveIndex]) : null
+    const waveNo = Math.min(this.waveIndex + 1, this.level.waves.length)
+    const preview = playing && this.waveIndex < this.level.waves.length ? waveChips(this.level.waves[this.waveIndex]) : null
     const stars = starCount(this.livingPets())
-    const waveLabel = `Wave ${waveNo}/${WAVES.length}`
+    const waveLabel = `Wave ${waveNo}/${this.level.waves.length}`
     this.hud.render({
       gold: this.gold,
       waveLabel,
@@ -1387,7 +1512,7 @@ export class Game {
       speed: this.speedChoice,
       muted: audio.muted,
       damageNumbers: this.showDamage,
-      hint: this.hint && this.towers.length === 0,
+      hint: false,
       startLabel,
       startEnabled: playing,
       countdownLabel,
@@ -1402,8 +1527,8 @@ export class Game {
               title: 'The pets are safe',
               detail:
                 stars >= 3
-                  ? `All ${WAVES.length} waves held, and every pet waddled home.`
-                  : `All ${WAVES.length} waves held. ${this.livingPets()} pets made it home.`,
+                  ? `All ${this.level.waves.length} waves held, and every pet waddled home.`
+                  : `All ${this.level.waves.length} waves held. ${this.livingPets()} pets made it home.`,
               stars,
             }
           : this.phase === 'defeat'
@@ -1414,7 +1539,66 @@ export class Game {
                 stars: 0,
               }
             : null,
+      title: this.titleView(),
+      coach: this.coachView(),
+      settingsOpen: this.settingsOpen,
+      settings: this.settings,
+      hapticsAvailable: typeof navigator.vibrate === 'function',
     })
+  }
+
+  private titleView() {
+    if (this.phase !== 'title') return null
+    return LEVELS.map((level) => ({
+      id: level.id,
+      name: level.name,
+      blurb: level.blurb,
+      stars: starsFor(level.id),
+      unlocked: levelUnlocked(level.id),
+      selected: level.id === this.selectedLevel,
+    }))
+  }
+
+  private coachView(): { text: string; x: number; y: number } | null {
+    if (this.tutorStep < 1 || this.tutorStep > 5 || this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') {
+      return null
+    }
+    const anchor = this.coachAnchor()
+    if (!anchor) return null
+    return { text: COACH[this.tutorStep], x: anchor.x, y: anchor.y }
+  }
+
+  private coachAnchor(): { x: number; y: number } | null {
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const mid = { x: rect.left + rect.width * 0.5, y: rect.top + rect.height * 0.42 }
+    if (this.tutorStep === 1) return this.projectWorld(this.map.hint.x, 1.35, this.map.hint.z) ?? mid
+    if (this.tutorStep === 2) {
+      const button = document.querySelector('[data-part="turret"], [data-part="ballista"], .piece')
+      return this.boxPoint(button) ?? mid
+    }
+    if (this.tutorStep === 3) return this.boxPoint(document.querySelector('#preview')) ?? mid
+    if (this.tutorStep === 4) {
+      const spot = this.map.points[Math.floor(this.map.points.length / 2)]
+      return this.projectWorld(spot.x, 1.2, spot.z) ?? mid
+    }
+    return this.boxPoint(document.querySelector('#start')) ?? mid
+  }
+
+  private boxPoint(node: Element | null): { x: number; y: number } | null {
+    if (!(node instanceof HTMLElement)) return null
+    const box = node.getBoundingClientRect()
+    if (box.width < 2 || box.height < 2) return null
+    return { x: box.left + box.width / 2, y: box.top }
+  }
+
+  private projectWorld(x: number, y: number, z: number): { x: number; y: number } | null {
+    _v.set(x, y, z).project(this.camera)
+    if (_v.z > 1) return null
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    return {
+      x: (_v.x * 0.5 + 0.5) * rect.width + rect.left,
+      y: (-_v.y * 0.5 + 0.5) * rect.height + rect.top,
+    }
   }
 
   private clearAnnouncements(): void {
@@ -1434,6 +1618,7 @@ export class Game {
       pet.play('dance')
       this.fx.burst(pet.home.x, 0.5, pet.home.z, 0xffe08a, 10, 2)
     }
+    saveStars(this.level.id, starCount(this.livingPets()))
     audio.duck(true)
     audio.play('win')
     this.syncSelection()
@@ -1444,7 +1629,7 @@ export class Game {
     if (this.phase === 'victory' || this.phase === 'defeat') return
     this.clearAnnouncements()
     this.phase = 'defeat'
-    this.noteWave(Math.min(this.waveIndex + 1, WAVES.length))
+    this.noteWave(Math.min(this.waveIndex + 1, this.level.waves.length))
     audio.duck(true)
     audio.play('lose')
     this.syncSelection()
@@ -1452,28 +1637,92 @@ export class Game {
   }
 
   retry(): void {
-    for (const tower of this.towers) this.scene.remove(tower.group)
-    for (const enemy of this.enemies) this.scene.remove(enemy.group)
-    for (const proj of this.projectiles) this.scene.remove(proj.mesh)
-    for (const pet of this.pets) this.scene.remove(pet.group)
-    for (const carry of this.carries) {
-      this.scene.remove(carry.beam)
-      this.scene.remove(carry.burst)
-      this.scene.remove(carry.glow)
+    this.installLevel(this.level, 'play')
+  }
+
+  startLevel(id: number): void {
+    this.installLevel(levelById(id), 'play')
+  }
+
+  playSelected(): void {
+    if (!levelUnlocked(this.selectedLevel)) return
+    this.installLevel(levelById(this.selectedLevel), 'play')
+  }
+
+  previewLevel(id: number): void {
+    if (!levelUnlocked(id)) return
+    if (this.phase === 'title' && this.level.id === id) {
+      this.selectedLevel = id
+      this.refreshHud()
+      return
     }
-    this.towers = []
-    this.enemies = []
-    this.pets = []
-    this.projectiles = []
-    this.carries = []
-    this.pending = []
+    this.installLevel(levelById(id), 'title')
+  }
+
+  next(): void {
+    if (this.phase === 'victory') {
+      const id = this.level.id + 1
+      if (id <= LEVELS.length && levelUnlocked(id)) {
+        this.installLevel(levelById(id), 'play')
+        return
+      }
+    }
+    this.installLevel(this.level, 'title')
+  }
+
+  openSettings(): void {
+    this.settingsOpen = true
+    this.refreshHud()
+  }
+
+  closeSettings(): void {
+    this.settingsOpen = false
+    this.refreshHud()
+  }
+
+  updateSettings(patch: Partial<Settings>): void {
+    const next = { ...this.settings, ...patch }
+    if (typeof navigator.vibrate !== 'function') next.haptics = false
+    this.settings = next
+    saveSettings(next)
+    this.showDamage = next.damage
+    audio.apply(next.sound, next.music)
+    if (patch.quality === 'low') this.applyTier('low')
+    else if (patch.quality === 'high') this.applyTier('high')
+    else if (patch.quality === 'auto') {
+      this.slowAccum = 0
+      this.applyTier(detectTier())
+    }
+    this.refreshHud()
+  }
+
+  skipCoach(): void {
+    this.advanceTutor('next')
+    this.refreshHud()
+  }
+
+  private installLevel(level: LevelDef, mode: 'play' | 'title'): void {
+    this.clearActors()
+    this.fx.clear()
+    this.hud.clearTransient()
+    if (this.map) {
+      this.scene.remove(this.map.group)
+      disposeMap(this.map)
+    }
+    this.level = level
+    this.selectedLevel = level.id
+    this.applyBiome(level.biome)
+    this.map = buildMap(level)
+    this.scene.add(this.map.group)
     this.rescues = 0
     this.abductions = 0
     this.waveLog = []
     this.effectiveAt.clear()
-    this.clearAnnouncements()
+    this.bannerTitle = null
+    this.bannerChips = null
+    this.bannerT = 0
     this.gold = START_GOLD
-    this.phase = 'ready'
+    this.phase = mode === 'title' ? 'title' : 'ready'
     this.waveIndex = 0
     this.countdown = 0
     this.kills = 0
@@ -1484,14 +1733,83 @@ export class Game {
     this.speedChoice = 1
     this.forcedScale = null
     this.selected = null
+    this.settingsOpen = false
     this.userCam = false
     this.cameraLock = null
-    this.applyFraming(true)
+    this.shake = 0
+    this.tutorStep = mode === 'play' && level.id === 1 && !tutorialSeen() ? 1 : 0
     audio.duck(false)
     this.spawnPets()
+    this.applyFraming(true)
     this.syncMarker()
     this.syncSelection()
     this.refreshHud()
+  }
+
+  private clearActors(): void {
+    for (const tower of this.towers) this.scene.remove(tower.group)
+    for (const enemy of this.enemies) this.scene.remove(enemy.group)
+    for (const proj of this.projectiles) this.scene.remove(proj.mesh)
+    for (const pooled of this.ammoPools.values()) {
+      for (const mesh of pooled) this.scene.remove(mesh)
+    }
+    for (const pet of this.pets) this.scene.remove(pet.group)
+    for (const carry of this.carries) {
+      this.scene.remove(carry.beam)
+      this.scene.remove(carry.burst)
+      this.scene.remove(carry.glow)
+      this.scene.remove(carry.icon)
+    }
+    this.towers = []
+    this.enemies = []
+    this.pets = []
+    this.projectiles = []
+    this.freeProjectiles = []
+    this.ammoPools.clear()
+    this.carries = []
+    this.pending = []
+  }
+
+  private advanceTutor(reason: 'base' | 'weapon' | 'wave' | 'rescue' | 'early' | 'next' | 'breather'): void {
+    if (this.tutorStep <= 0) return
+    const step = this.tutorStep
+    const match =
+      reason === 'next' ||
+      (step === 1 && reason === 'base') ||
+      (step === 2 && reason === 'weapon') ||
+      (step === 3 && reason === 'wave') ||
+      (step === 4 && (reason === 'rescue' || reason === 'breather')) ||
+      (step === 5 && (reason === 'early' || reason === 'wave'))
+    if (!match) return
+    this.tutorStep += 1
+    if (this.tutorStep > 5) {
+      this.tutorStep = 0
+      markTutorial()
+    }
+    this.syncMarker()
+  }
+
+  private takeAmmo(name: string): THREE.Object3D {
+    const pool = this.ammoPools.get(name)
+    const mesh = pool?.pop()
+    if (mesh) {
+      mesh.visible = true
+      return mesh
+    }
+    const created = spawnModel(name)
+    created.userData.ammoName = name
+    const ammoScale = name.includes('arrow') ? 0.65 : name.includes('bullet') ? 1.15 : 1.45
+    created.scale.setScalar(ammoScale)
+    this.scene.add(created)
+    return created
+  }
+
+  private recycleAmmo(mesh: THREE.Object3D): void {
+    mesh.visible = false
+    const name = String(mesh.userData.ammoName ?? '')
+    const pool = this.ammoPools.get(name) ?? []
+    pool.push(mesh)
+    this.ammoPools.set(name, pool)
   }
 
   private expose(): void {
@@ -1503,8 +1821,8 @@ export class Game {
         error: this.error,
         phase: this.phase,
         gold: this.gold,
-        wave: Math.min(this.waveIndex + 1, WAVES.length),
-        waves: WAVES.length,
+        wave: Math.min(this.waveIndex + 1, this.level.waves.length),
+        waves: this.level.waves.length,
         pets: this.livingPets(),
         petMax: PET_COUNT,
         enemies: this.enemies.length,
@@ -1517,7 +1835,13 @@ export class Game {
         stars: starCount(this.livingPets()),
         carries: this.carries.length,
         fps: Math.round(this.fps),
+        draws: this.renderer.info.render.calls,
         zoom: Math.round(this.distance * 10) / 10,
+        level: this.level.id,
+        pads: this.level.pads.map((pad) => [pad[0], pad[1]]),
+        hint: { x: this.map.hint.x, z: this.map.hint.z },
+        tutor: this.tutorStep,
+        tier: this.tier,
         log: this.waveLog.map((row) => ({ ...row })),
       }),
       cellKind: (x, z) => this.map.cells.get(cellKey(x, z))?.kind ?? null,
@@ -1573,9 +1897,9 @@ export class Game {
       },
       debugBoss: () => {
         this.phase = 'wave'
-        this.waveIndex = WAVES.length - 1
+        this.waveIndex = this.level.waves.length - 1
         this.bannerTitle = 'Boss wave'
-        this.bannerChips = waveChips(WAVES[WAVES.length - 1])
+        this.bannerChips = waveChips(this.level.waves[this.level.waves.length - 1])
         this.bannerT = 8
         const boss = this.spawnEnemy('boss', 1, 0.55)
         boss.pos.y = ENEMIES.boss.hover
@@ -1614,6 +1938,18 @@ export class Game {
       debugWin: () => this.win(),
       debugLose: () => this.lose(),
       retry: () => this.retry(),
+      startLevel: (id: number) => this.startLevel(id),
+      next: () => this.next(),
+      debugTitle: () => this.installLevel(levelById(this.selectedLevel || 1), 'title'),
+      debugSettings: () => this.openSettings(),
+      debugCoach: () => {
+        this.phase = 'ready'
+        this.tutorStep = 1
+        this.selected = null
+        this.syncMarker()
+        this.syncSelection()
+        this.refreshHud()
+      },
     }
   }
 }

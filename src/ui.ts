@@ -1,5 +1,6 @@
 import { asset, heartUrl, pieceThumbnail } from './assets'
 import type { WaveChip } from './config'
+import type { Settings } from './progress'
 
 export interface ActionButton {
   id: string
@@ -16,6 +17,21 @@ export interface SelectionView {
   blurb: string
   stats: string
   actions: ActionButton[]
+}
+
+export interface TitleLevel {
+  id: number
+  name: string
+  blurb: string
+  stars: number
+  unlocked: boolean
+  selected: boolean
+}
+
+export interface CoachView {
+  text: string
+  x: number
+  y: number
 }
 
 export interface HudState {
@@ -38,6 +54,11 @@ export interface HudState {
   bannerChips: WaveChip[] | null
   selection: SelectionView | null
   end: { kind: 'win' | 'lose'; title: string; detail: string; stars: number } | null
+  title: TitleLevel[] | null
+  coach: CoachView | null
+  settingsOpen: boolean
+  settings: Settings
+  hapticsAvailable: boolean
 }
 
 export class Hud {
@@ -47,6 +68,12 @@ export class Hud {
   onMute: () => void = () => {}
   onDamage: () => void = () => {}
   onRetry: () => void = () => {}
+  onNext: () => void = () => {}
+  onPlay: () => void = () => {}
+  onPickLevel: (id: number) => void = () => {}
+  onCoach: () => void = () => {}
+  onCloseSettings: () => void = () => {}
+  onSettings: (patch: Partial<Settings>) => void = () => {}
 
   private root: HTMLElement
   private goldEl: HTMLElement
@@ -82,6 +109,14 @@ export class Hud {
   private holdTimer = 0
   private suppressClick = false
   private muteIcon: HTMLImageElement
+  private titleElScreen: HTMLElement
+  private levelsEl: HTMLElement
+  private coachEl: HTMLElement
+  private coachText: HTMLElement
+  private sheetEl: HTMLElement
+  private nextEl: HTMLButtonElement
+  private titleSig = ''
+  private coachSig = ''
 
   constructor(app: HTMLElement) {
     app.innerHTML = `
@@ -119,7 +154,37 @@ export class Hud {
           <div id="stars" hidden></div>
           <h1 id="end-title"></h1>
           <p id="end-detail"></p>
-          <button type="button" id="retry" class="btn green">Retry</button>
+          <div id="end-row">
+            <button type="button" id="retry" class="btn green">Retry</button>
+            <button type="button" id="next" class="btn blue">Next</button>
+          </div>
+        </div>
+      </div>
+      <div id="title" hidden>
+        <div id="title-copy">
+          <h1><span>Tiny</span><span>Tower</span><span>Defense</span></h1>
+        </div>
+        <button type="button" id="play" class="btn green">Play</button>
+        <div id="levels"></div>
+      </div>
+      <div id="coach" hidden>
+        <p id="coach-text"></p>
+        <button type="button" id="coach-next" class="btn yellow">Next</button>
+      </div>
+      <div id="sheet" hidden>
+        <div class="sheet">
+          <h2>Settings</h2>
+          <button type="button" data-set="sound">Sound</button>
+          <button type="button" data-set="music">Music</button>
+          <button type="button" data-set="haptics">Haptics</button>
+          <button type="button" data-set="damage">Damage numbers</button>
+          <div id="quality" class="quality">
+            <span>Quality</span>
+            <button type="button" data-quality="auto">Auto</button>
+            <button type="button" data-quality="low">Low</button>
+            <button type="button" data-quality="high">High</button>
+          </div>
+          <button type="button" id="sheet-close" class="btn blue">Close</button>
         </div>
       </div>
       <div id="loading">
@@ -154,12 +219,43 @@ export class Hud {
     this.damageEl = this.need('#dmg') as HTMLButtonElement
     this.loadingEl = this.need('#loading')
     this.loadingText = this.need('#loading-text')
+    this.titleElScreen = this.need('#title')
+    this.levelsEl = this.need('#levels')
+    this.coachEl = this.need('#coach')
+    this.coachText = this.need('#coach-text')
+    this.sheetEl = this.need('#sheet')
+    this.nextEl = this.need('#next') as HTMLButtonElement
 
     this.speedEl.addEventListener('click', () => this.onSpeed())
     this.startEl.addEventListener('click', () => this.onStart())
     this.muteEl.addEventListener('click', () => this.onMute())
     this.damageEl.addEventListener('click', () => this.onDamage())
     this.need('#retry').addEventListener('click', () => this.onRetry())
+    this.nextEl.addEventListener('click', () => this.onNext())
+    this.need('#play').addEventListener('click', () => this.onPlay())
+    this.need('#coach-next').addEventListener('click', () => this.onCoach())
+    this.need('#sheet-close').addEventListener('click', () => this.onCloseSettings())
+    this.sheetEl.addEventListener('click', (event) => {
+      if (event.target === this.sheetEl) this.onCloseSettings()
+    })
+    this.levelsEl.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest('button')
+      const id = Number(button?.dataset.level)
+      if (id) this.onPickLevel(id)
+    })
+    this.sheetEl.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest('button')
+      if (!(button instanceof HTMLButtonElement)) return
+      if (button.dataset.set) {
+        const key = button.dataset.set as 'sound' | 'music' | 'haptics' | 'damage'
+        const on = button.getAttribute('aria-pressed') !== 'true'
+        this.onSettings({ [key]: on })
+      }
+      if (button.dataset.quality) {
+        const quality = button.dataset.quality as Settings['quality']
+        this.onSettings({ quality })
+      }
+    })
     this.trayEl.addEventListener('pointerdown', (event) => {
       const button = (event.target as HTMLElement).closest('button')
       const id = button?.dataset.part
@@ -267,10 +363,8 @@ export class Hud {
     this.startEl.disabled = !state.startEnabled
     this.countEl.hidden = !state.countdownLabel
     this.countEl.textContent = state.countdownLabel ?? ''
+    this.hintEl.textContent = 'Tap a pad to build, then stack a weapon. Taller towers reach farther.'
     this.hintEl.hidden = !state.hint
-    if (state.hint) {
-      this.hintEl.textContent = 'Tap the grass under the arrow, then stack a weapon. Taller towers reach farther.'
-    }
     this.fillChips(this.previewEl, state.preview, 'chip')
     this.bannerEl.hidden = !state.bannerTitle
     this.bannerTitle.textContent = state.bannerTitle ?? ''
@@ -350,6 +444,92 @@ export class Hud {
       this.endEl.hidden = true
       this.starSignature = ''
     }
+    this.renderTitle(state.title)
+    this.renderCoach(state.coach)
+    this.renderSettings(state)
+  }
+
+  private renderTitle(levels: TitleLevel[] | null): void {
+    const show = !!levels
+    this.titleElScreen.hidden = !show
+    this.root.classList.toggle('mode-title', show)
+    if (!levels) {
+      this.titleSig = ''
+      return
+    }
+    const sig = levels.map((level) => `${level.id}:${level.stars}:${level.unlocked}:${level.selected}`).join('|')
+    if (sig === this.titleSig) return
+    this.titleSig = sig
+    const filled = asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')
+    const empty = asset('assets/ui/ui-pack/PNG/Yellow/Double/star_outline.png')
+    this.levelsEl.replaceChildren()
+    for (const level of levels) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.dataset.level = String(level.id)
+      button.className = 'level'
+      button.disabled = !level.unlocked
+      button.classList.toggle('selected', level.selected)
+      button.classList.toggle('locked', !level.unlocked)
+      const stars = document.createElement('span')
+      stars.className = 'level-stars'
+      for (let i = 0; i < 3; i++) {
+        const img = document.createElement('img')
+        img.alt = ''
+        img.src = i < level.stars ? filled : empty
+        stars.append(img)
+      }
+      const name = document.createElement('span')
+      name.className = 'level-name'
+      name.textContent = level.unlocked ? level.name : 'Locked'
+      const blurb = document.createElement('span')
+      blurb.className = 'level-blurb'
+      blurb.textContent = level.unlocked ? level.blurb : 'Beat the previous level'
+      button.append(name, blurb, stars)
+      this.levelsEl.append(button)
+    }
+  }
+
+  private renderCoach(coach: CoachView | null): void {
+    this.coachEl.hidden = !coach
+    if (!coach) {
+      this.coachSig = ''
+      return
+    }
+    const sig = `${coach.text}:${Math.round(coach.x)}:${Math.round(coach.y)}`
+    if (sig === this.coachSig) return
+    this.coachSig = sig
+    this.coachText.textContent = coach.text
+    const bubbleH = 92
+    const below = coach.y < bubbleH + 12
+    this.coachEl.classList.toggle('below', below)
+    const x = Math.min(window.innerWidth - 16, Math.max(16, coach.x))
+    const y = below ? coach.y + 18 : coach.y - 12
+    this.coachEl.style.left = `${x}px`
+    this.coachEl.style.top = `${y}px`
+  }
+
+  private renderSettings(state: HudState): void {
+    this.sheetEl.hidden = !state.settingsOpen
+    const rows: Array<['sound' | 'music' | 'haptics' | 'damage', boolean]> = [
+      ['sound', state.settings.sound],
+      ['music', state.settings.music],
+      ['haptics', state.settings.haptics],
+      ['damage', state.settings.damage],
+    ]
+    for (const [key, on] of rows) {
+      const button = this.sheetEl.querySelector(`[data-set="${key}"]`)
+      if (!(button instanceof HTMLButtonElement)) continue
+      button.setAttribute('aria-pressed', on ? 'true' : 'false')
+      button.disabled = key === 'haptics' && !state.hapticsAvailable
+      const label = button.dataset.label ?? button.textContent?.replace(/: .*$/, '') ?? key
+      button.dataset.label = label
+      button.textContent = `${label}: ${on ? 'On' : 'Off'}`
+    }
+    this.sheetEl.querySelectorAll('[data-quality]').forEach((node) => {
+      if (!(node instanceof HTMLButtonElement)) return
+      node.classList.toggle('pressed', node.dataset.quality === state.settings.quality)
+    })
   }
 
   private fillChips(host: HTMLElement, chips: WaveChip[] | null, kind: 'chip' | 'bchip'): void {
