@@ -133,16 +133,52 @@ export class Fx {
     const green = '#b6ff8a'
     const saved = '#b8ffb0'
     const lost = '#ffb0a8'
-    for (let n = 1; n <= 80; n++) this.glyph(String(n), white)
+    const sell = '#fff1b8'
+    for (let n = 1; n <= 160; n++) this.glyph(String(n), white)
     for (const reward of [2, 4, 7, 9, 36]) this.glyph(`+${reward}`, gold)
+    for (const cost of [56, 68, 74, 80]) {
+      let spent = cost
+      this.glyph(`+${Math.floor(spent * 0.5)}`, sell)
+      for (const add of [40, 70, 100]) {
+        spent += add
+        this.glyph(`+${Math.floor(spent * 0.5)}`, sell)
+      }
+    }
     this.glyph('Effective!', green)
     this.glyph('Saved!', saved)
     this.glyph('Lost!', lost)
-    const slot = this.takePopup()
-    if (!slot) return
-    slot.sprite.visible = true
-    slot.sprite.position.set(0, -40, 0)
-    this.parkPopup(slot)
+  }
+
+  /**
+   * Upload every baked glyph and put one chunk, ring, and popup on screen
+   * so the warmup frame owns their geometry. Call the returned function after that frame.
+   */
+  prime(renderer: THREE.WebGLRenderer): () => void {
+    this.prepare()
+    for (const tex of this.glyphs.values()) {
+      renderer.initTexture(tex)
+      tex.needsUpdate = false
+    }
+    const chunk = this.takeChunk(0xfff2c4)
+    chunk.mesh.position.set(2, 0.5, 6)
+    chunk.mesh.frustumCulled = false
+    const ring = this.ringFree.pop() ?? this.makeRing()
+    ring.mesh.visible = true
+    ring.mesh.position.set(2.4, 0.28, 6)
+    ring.mesh.frustumCulled = false
+    const popup = this.takePopup()
+    if (popup) {
+      const mat = popup.sprite.material as THREE.SpriteMaterial
+      mat.map = this.glyph('12', '#fff6ea')
+      popup.sprite.visible = true
+      popup.sprite.position.set(2, 1.1, 6)
+      popup.sprite.frustumCulled = false
+    }
+    return () => {
+      this.parkChunk(chunk)
+      this.parkRing(ring)
+      if (popup) this.parkPopup(popup)
+    }
   }
 
   private takePart(): Particle | null {

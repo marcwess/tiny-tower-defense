@@ -26,11 +26,11 @@ Before, 30 seconds of combat on that build:
 - Screen shake used wall-clock time and stacked on every kill.
 - About 8 major garbage collections from per-shot allocations.
 
-After, three Meadow waves in headless Chromium (filled in by `scripts/perf-probe.mjs` on this branch):
+After, three Meadow waves in headless Chromium with damage numbers on (`scripts/perf-probe.mjs`, phone-sized viewport, DPR 2):
 
-- Live geometries, textures, and programs stay flat across the three waves.
-- Canvas resizes during play: see probe.
-- Shader compiles during play: see probe.
-- Texture uploads per second in combat: see probe.
+- Live geometries stayed at 95, textures at 198, and programs at 16 from wave 1 through the wave 4 breather.
+- Canvas resizes during play: 0. Shader compiles during play: 0. The only resize is the first layout, before the wave.
+- Texture uploads per second in combat: 0 (max and average). `playUploads` stayed 0.
+- Tier stayed High. No automatic tier change.
 
 `?perf=1` draws FPS, a frame-time graph with p95 and worst, steps, draws, triangles, live geometries, textures, programs, popups and sounds per second, tier, DPR, canvas size, and a log of tier changes, resizes, and compiles. Toggles cover damage numbers, sound, shadows, and a forced tier. The tier is chosen once at load. Changing it is a settings action, not an automatic drop mid-wave.

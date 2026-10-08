@@ -313,6 +313,7 @@ export class Game {
   })
   private discMat = new THREE.MeshLambertMaterial({ color: 0xd9d0c2 })
   private warmed = false
+  private warmupAmmo: THREE.Object3D[] = []
 
   constructor(
     private app: HTMLElement,
@@ -439,11 +440,16 @@ export class Game {
     }
     this.fx = new Fx(this.scene)
     this.installLevel(levelById(1), capture ? 'play' : 'title')
+    if (document.fonts?.load) await document.fonts.load('400 28px "Kenney Future"')
     this.warmPools()
+    const hideFx = this.fx.prime(this.renderer)
+    const hideActors = this.revealForWarmup()
     await this.renderer.compileAsync(this.scene, this.camera)
     perf.playing = false
     this.updateCamera()
     this.renderer.render(this.scene, this.camera)
+    hideFx()
+    hideActors()
     perf.playResizes = 0
     perf.playCompiles = 0
     perf.playUploads = 0
@@ -1137,13 +1143,73 @@ export class Game {
     }
     for (let i = 0; i < 3; i++) this.makeRig()
     this.fx.prepare()
-    this.fx.popup(0, -30, 0, '12', '#fff6ea', 0.2)
     this.fx.burst(0, -30, 0, 0xfff4c4, 4, 1)
     for (const name of ['weapon-ammo-arrow', 'weapon-ammo-cannonball', 'weapon-ammo-boulder', 'weapon-ammo-bullet']) {
       const mesh = spawnModel(name)
+      const ammoScale = name.includes('arrow') ? 0.65 : name.includes('bullet') ? 1.15 : 1.45
+      mesh.scale.setScalar(ammoScale)
       mesh.visible = false
       mesh.position.set(0, -30, 0)
+      mesh.userData.ammoName = name
       this.scene.add(mesh)
+      this.warmupAmmo.push(mesh)
+      const pool = this.ammoPools.get(name) ?? []
+      pool.push(mesh)
+      this.ammoPools.set(name, pool)
+    }
+  }
+
+  /** Show one of every pooled mesh so the warmup frame uploads it before play. */
+  private revealForWarmup(): () => void {
+    const saved: Array<{ obj: THREE.Object3D; visible: boolean; cull: boolean }> = []
+    const reveal = (obj: THREE.Object3D): void => {
+      obj.traverse((child) => {
+        saved.push({ obj: child, visible: child.visible, cull: child.frustumCulled })
+        child.visible = true
+        child.frustumCulled = false
+      })
+    }
+    for (const list of this.enemyPool.values()) {
+      const enemy = list[0]
+      if (!enemy) continue
+      enemy.badge.visible = true
+      enemy.group.position.set(2, 0.55, 6)
+      reveal(enemy.group)
+    }
+    for (const mesh of this.warmupAmmo) {
+      mesh.position.set(3, 0.4, 6)
+      reveal(mesh)
+    }
+    for (const rig of this.rigs) {
+      rig.beam.position.set(2.2, 0.2, 6)
+      rig.burst.position.set(2.2, 0.15, 6)
+      rig.glow.position.set(2.2, 0.5, 6)
+      reveal(rig.beam)
+      reveal(rig.burst)
+      reveal(rig.glow)
+    }
+    return () => {
+      for (let i = saved.length - 1; i >= 0; i--) {
+        const item = saved[i]
+        item.obj.visible = item.visible
+        item.obj.frustumCulled = item.cull
+      }
+      for (const list of this.enemyPool.values()) {
+        const enemy = list[0]
+        if (!enemy) continue
+        enemy.badge.visible = false
+        enemy.group.visible = false
+        enemy.group.position.set(0, -20, 0)
+      }
+      for (const mesh of this.warmupAmmo) {
+        mesh.visible = false
+        mesh.position.set(0, -30, 0)
+      }
+      for (const rig of this.rigs) {
+        rig.beam.visible = false
+        rig.burst.visible = false
+        rig.glow.visible = false
+      }
     }
   }
 
