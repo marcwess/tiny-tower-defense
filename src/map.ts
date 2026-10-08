@@ -20,6 +20,8 @@ export interface BuiltMap {
   path: PathTile[]
   points: XZ[]
   hint: { x: number; z: number }
+  clouds: THREE.Sprite[]
+  waterMaps: THREE.Texture[]
 }
 
 export function cellKey(x: number, z: number): string {
@@ -98,6 +100,7 @@ export function buildMap(): BuiltMap {
 
   const group = new THREE.Group()
   group.name = 'map'
+  const waterMaps: THREE.Texture[] = []
   const picks: THREE.Mesh[] = []
   const pickGeo = new THREE.PlaneGeometry(0.96, 0.96)
   const pickMat = new THREE.MeshBasicMaterial({
@@ -110,6 +113,7 @@ export function buildMap(): BuiltMap {
     const mesh = spawnModel(cell.model)
     mesh.position.set(cell.x, 0, cell.z)
     mesh.rotation.y = cell.rot * (Math.PI / 2)
+    if (cell.model.includes('river')) mesh.add(makeWater(cell.model.includes('bridge'), waterMaps))
     group.add(mesh)
 
     const pick = new THREE.Mesh(pickGeo, pickMat)
@@ -120,6 +124,10 @@ export function buildMap(): BuiltMap {
     picks.push(pick)
   }
 
+  group.add(makeIsland())
+  const clouds = makeClouds()
+  for (const cloud of clouds) group.add(cloud)
+
   return {
     group,
     picks,
@@ -127,5 +135,205 @@ export function buildMap(): BuiltMap {
     path: PATH,
     points: waypoints(PATH),
     hint: HINT_CELL,
+    clouds,
+    waterMaps,
+  }
+}
+
+function waveCanvas(): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 64
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return canvas
+  const sky = ctx.createLinearGradient(0, 0, 0, 64)
+  sky.addColorStop(0, 'rgba(186, 236, 255, 0.15)')
+  sky.addColorStop(0.5, 'rgba(120, 206, 236, 0.55)')
+  sky.addColorStop(1, 'rgba(70, 170, 214, 0.2)')
+  ctx.fillStyle = sky
+  ctx.fillRect(0, 0, 128, 64)
+  ctx.strokeStyle = 'rgba(244, 253, 255, 0.75)'
+  ctx.lineWidth = 4
+  ctx.lineCap = 'round'
+  for (let row = 0; row < 3; row++) {
+    ctx.beginPath()
+    for (let x = 0; x <= 128; x += 4) {
+      const y = 16 + row * 16 + Math.sin(x * 0.09 + row) * 3
+      if (x === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  }
+  return canvas
+}
+
+function foamCanvas(): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 32
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return canvas
+  ctx.clearRect(0, 0, 128, 32)
+  ctx.fillStyle = 'rgba(255,255,255,0.92)'
+  for (let i = 0; i < 14; i++) {
+    const x = (i / 14) * 128
+    ctx.beginPath()
+    ctx.ellipse(x, 16, 7, 5, 0, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  return canvas
+}
+
+let sharedWaves: THREE.Texture | null = null
+let sharedFoam: THREE.Texture | null = null
+
+function waterTextures(): [THREE.Texture, THREE.Texture] {
+  if (!sharedWaves || !sharedFoam) {
+    sharedWaves = scrollingMap(waveCanvas(), 0.07)
+    sharedFoam = scrollingMap(foamCanvas(), 0.045)
+  }
+  return [sharedWaves, sharedFoam]
+}
+
+function scrollingMap(canvas: HTMLCanvasElement, speed: number): THREE.Texture {
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.wrapS = THREE.RepeatWrapping
+  tex.wrapT = THREE.RepeatWrapping
+  tex.magFilter = THREE.LinearFilter
+  tex.minFilter = THREE.LinearFilter
+  tex.generateMipmaps = false
+  tex.userData.speed = speed
+  return tex
+}
+
+/** Local channel runs along Z, between the dirt banks. */
+function makeWater(bridge: boolean, bucket: THREE.Texture[]): THREE.Group {
+  const group = new THREE.Group()
+  const [waves, foamTex] = waterTextures()
+  if (!bucket.includes(waves)) bucket.push(waves, foamTex)
+  const water = new THREE.Mesh(
+    new THREE.PlaneGeometry(bridge ? 0.46 : 0.58, 1.02),
+    new THREE.MeshBasicMaterial({
+      map: waves,
+      transparent: true,
+      opacity: bridge ? 0.4 : 0.5,
+      depthWrite: false,
+    }),
+  )
+  water.rotation.x = -Math.PI / 2
+  water.position.y = bridge ? 0.17 : 0.232
+  water.renderOrder = 2
+  group.add(water)
+
+  for (const side of [-1, 1]) {
+    const foam = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.1, 1.02),
+      new THREE.MeshBasicMaterial({
+        map: foamTex,
+        transparent: true,
+        opacity: 0.8,
+        depthWrite: false,
+      }),
+    )
+    foam.rotation.x = -Math.PI / 2
+    foam.position.set(side * (bridge ? 0.2 : 0.26), bridge ? 0.19 : 0.246, 0)
+    foam.renderOrder = 3
+    group.add(foam)
+  }
+  return group
+}
+
+function makeIsland(): THREE.Group {
+  const group = new THREE.Group()
+  const dirt = new THREE.MeshLambertMaterial({ color: 0xc4895a })
+  const rock = new THREE.MeshLambertMaterial({ color: 0x8a7364 })
+  const soil = new THREE.MeshLambertMaterial({ color: 0x6e5344 })
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(7.55, 0.46, 11.55), dirt)
+  slab.position.set(3, -0.24, 5)
+  slab.castShadow = true
+  slab.receiveShadow = true
+  const crust = new THREE.Mesh(new THREE.BoxGeometry(7.15, 0.38, 11.1), rock)
+  crust.position.set(3, -0.58, 5)
+  crust.castShadow = true
+  crust.receiveShadow = true
+  const keel = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.42, 9.6), soil)
+  keel.position.set(3, -0.9, 5)
+  keel.castShadow = true
+  group.add(slab, crust, keel)
+
+  const catcher = new THREE.Mesh(
+    new THREE.CircleGeometry(11.5, 48),
+    new THREE.ShadowMaterial({ opacity: 0.22 }),
+  )
+  catcher.rotation.x = -Math.PI / 2
+  catcher.position.set(3, -1.35, 5)
+  catcher.receiveShadow = true
+  group.add(catcher)
+
+  const rocks: Array<[number, number, number, number]> = [
+    [-0.55, -0.15, -0.35, 0.7],
+    [6.55, -0.2, 10.4, 0.85],
+    [-0.4, -0.1, 10.2, 0.55],
+    [6.6, -0.18, -0.2, 0.62],
+  ]
+  for (const [x, y, z, s] of rocks) {
+    const rockMesh = spawnModel(s > 0.7 ? 'tile-rock' : 'tile-hill')
+    rockMesh.position.set(x, y, z)
+    rockMesh.scale.setScalar(s)
+    rockMesh.rotation.y = x
+    group.add(rockMesh)
+  }
+  return group
+}
+
+function makeClouds(): THREE.Sprite[] {
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 64
+  const ctx = canvas.getContext('2d')
+  const sprites: THREE.Sprite[] = []
+  if (!ctx) return sprites
+  ctx.clearRect(0, 0, 128, 64)
+  ctx.fillStyle = 'rgba(255,255,255,0.92)'
+  for (const [x, y, rx, ry] of [
+    [40, 34, 28, 16],
+    [68, 30, 34, 18],
+    [96, 36, 22, 13],
+    [58, 40, 20, 12],
+  ] as const) {
+    ctx.beginPath()
+    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  const spots = [
+    { x: -1.2, y: 3.4, z: 2.2, s: 2.4 },
+    { x: 7.4, y: 4.1, z: 7.5, s: 2.8 },
+    { x: 1.2, y: 4.6, z: 11.2, s: 2.2 },
+    { x: 8.2, y: 3.2, z: 4.4, s: 1.8 },
+  ]
+  for (const spot of spots) {
+    const sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0.9 }),
+    )
+    sprite.position.set(spot.x, spot.y, spot.z)
+    sprite.scale.set(spot.s, spot.s * 0.5, 1)
+    sprite.userData.cloud = { x: spot.x, z: spot.z, y: spot.y }
+    sprites.push(sprite)
+  }
+  return sprites
+}
+
+export function tickDiorama(map: BuiltMap, time: number): void {
+  for (const tex of map.waterMaps) {
+    const speed = (tex.userData.speed as number) || 0.05
+    tex.offset.x = time * speed
+  }
+  for (const cloud of map.clouds) {
+    const home = cloud.userData.cloud as { x: number; y: number; z: number }
+    cloud.position.x = home.x + Math.sin(time * 0.15 + home.z) * 0.35
+    cloud.position.y = home.y + Math.sin(time * 0.4 + home.x) * 0.06
   }
 }

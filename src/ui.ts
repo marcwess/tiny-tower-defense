@@ -3,6 +3,7 @@ import { asset } from './assets'
 export interface ActionButton {
   id: string
   label: string
+  detail?: string
   cost: string
   enabled: boolean
   tone: 'blue' | 'green' | 'red' | 'yellow'
@@ -55,6 +56,7 @@ export class Hud {
   private endEl: HTMLElement
   private endTitle: HTMLElement
   private endDetail: HTMLElement
+  private endIcon: HTMLImageElement
   private loadingEl: HTMLElement
   private loadingText: HTMLElement
   private signature = ''
@@ -64,10 +66,10 @@ export class Hud {
     app.innerHTML = `
       <div id="hud">
         <header id="top">
-          <div class="pill" id="gold"><img alt="" src="${asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')}" /><span>0</span></div>
-          <div class="pill" id="wave">Wave 1</div>
-          <div class="pill" id="pets">Pets 5</div>
-          <button type="button" id="mute" class="round" aria-label="Mute">Sound</button>
+          <div class="pill gold" id="gold"><img alt="" src="${asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')}" /><span>0</span></div>
+          <div class="pill wave" id="wave"><img alt="" src="${asset('assets/ui/ui-pack/PNG/Extra/Double/icon_play_dark.png')}" /><span>1/9</span></div>
+          <div class="pill pets" id="pets"><img alt="" src="${asset('assets/ui/ui-pack/PNG/Green/Double/star.png')}" /><span>5</span></div>
+          <button type="button" id="mute" class="round" aria-label="Sound">Sound</button>
         </header>
         <div id="dock">
           <p id="hint"></p>
@@ -84,7 +86,8 @@ export class Hud {
         </div>
       </div>
       <div id="end" hidden>
-        <div class="card">
+        <div class="card end-card">
+          <img id="end-icon" alt="" src="${asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')}" />
           <h1 id="end-title"></h1>
           <p id="end-detail"></p>
           <button type="button" id="retry" class="btn green">Retry</button>
@@ -97,8 +100,8 @@ export class Hud {
     `
     this.root = app
     this.goldEl = this.need('#gold span')
-    this.waveEl = this.need('#wave')
-    this.petsEl = this.need('#pets')
+    this.waveEl = this.need('#wave span')
+    this.petsEl = this.need('#pets span')
     this.muteEl = this.need('#mute') as HTMLButtonElement
     this.speedEl = this.need('#speed') as HTMLButtonElement
     this.startEl = this.need('#start') as HTMLButtonElement
@@ -111,6 +114,7 @@ export class Hud {
     this.endEl = this.need('#end')
     this.endTitle = this.need('#end-title')
     this.endDetail = this.need('#end-detail')
+    this.endIcon = this.need('#end-icon') as HTMLImageElement
     this.loadingEl = this.need('#loading')
     this.loadingText = this.need('#loading-text')
 
@@ -134,6 +138,30 @@ export class Hud {
     this.loadingText.textContent = text
   }
 
+  flyCoin(x: number, y: number): void {
+    const pill = this.goldEl.parentElement
+    if (!pill) return
+    const coin = document.createElement('img')
+    coin.alt = ''
+    coin.className = 'fly-coin'
+    coin.src = asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')
+    this.root.appendChild(coin)
+    const dest = pill.getBoundingClientRect()
+    const dx = dest.left + dest.width * 0.35
+    const dy = dest.top + dest.height * 0.35
+    const anim = coin.animate(
+      [
+        { transform: `translate(${x}px, ${y}px) scale(1)`, opacity: 1 },
+        { transform: `translate(${dx}px, ${dy}px) scale(0.55)`, opacity: 1 },
+      ],
+      { duration: 520, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' },
+    )
+    anim.onfinish = () => {
+      coin.remove()
+      this.flashGold()
+    }
+  }
+
   flashGold(): void {
     const pill = this.goldEl.parentElement
     pill?.classList.remove('shake')
@@ -146,8 +174,8 @@ export class Hud {
       this.gold = state.gold
       this.goldEl.textContent = String(state.gold)
     }
-    this.waveEl.textContent = state.waveLabel
-    this.petsEl.textContent = `Pets ${state.pets}/${state.petMax}`
+    this.waveEl.textContent = state.waveLabel.replace(/^Wave\s+/i, '')
+    this.petsEl.textContent = `${state.pets}/${state.petMax}`
     this.muteEl.textContent = state.muted ? 'Muted' : 'Sound'
     this.muteEl.setAttribute('aria-pressed', state.muted ? 'true' : 'false')
     this.speedEl.textContent = `${state.speed}×`
@@ -156,7 +184,7 @@ export class Hud {
     this.startEl.disabled = !state.startEnabled
     this.hintEl.hidden = !state.hint
     if (state.hint) {
-      this.hintEl.textContent = 'Tap the grass under the arrow, then stack a weapon. Height adds range. Walls change the rate. Roofs add a trick.'
+      this.hintEl.textContent = 'Tap the grass under the arrow, then stack a weapon. Taller towers reach farther.'
     }
 
     if (!state.selection) {
@@ -176,7 +204,7 @@ export class Hud {
           button.type = 'button'
           button.dataset.part = action.id
           button.className = `piece ${action.tone}`
-          button.innerHTML = `<span class="piece-name">${action.label}</span><span class="piece-cost">${action.cost}</span>`
+          button.innerHTML = `<span class="piece-name">${action.label}</span><span class="piece-detail">${action.detail ?? ''}</span><span class="piece-cost">${action.cost}</span>`
           this.trayEl.appendChild(button)
         }
       }
@@ -196,6 +224,11 @@ export class Hud {
       this.endEl.dataset.kind = state.end.kind
       this.endTitle.textContent = state.end.title
       this.endDetail.textContent = state.end.detail
+      this.endIcon.src = asset(
+        state.end.kind === 'win'
+          ? 'assets/ui/ui-pack/PNG/Yellow/Double/star.png'
+          : 'assets/ui/ui-pack/PNG/Red/Double/icon_cross.png',
+      )
     } else {
       this.endEl.hidden = true
     }

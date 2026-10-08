@@ -30,6 +30,8 @@ interface TinyApi {
   cameraFocus: (x: number, z: number, distance: number) => void
   cameraLook: (px: number, py: number, pz: number, tx: number, ty: number, tz: number) => void
   setGold: (amount: number) => void
+  deselect: () => void
+  select: (x: number, z: number) => void
   debugAbduct: () => void
   debugWin: () => void
   debugLose: () => void

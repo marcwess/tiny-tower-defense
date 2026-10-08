@@ -69,19 +69,55 @@ export function kitMaterial(): THREE.MeshLambertMaterial {
   return sharedMat
 }
 
+/** Water faces in the kit stretch UVs across the atlas. Mipmaps then average in the black padding and the river turns to static. */
+const WATER_UV = { u: 0.117, v: 0.94 }
+
+function configureAtlas(map: THREE.Texture): void {
+  map.colorSpace = THREE.SRGBColorSpace
+  map.magFilter = THREE.NearestFilter
+  map.minFilter = THREE.NearestFilter
+  map.generateMipmaps = false
+  map.needsUpdate = true
+}
+
+function repairRiverUvs(mesh: THREE.Mesh): void {
+  const uv = mesh.geometry.getAttribute('uv')
+  const index = mesh.geometry.getIndex()
+  if (!uv || !index) return
+  for (let i = 0; i < index.count; i += 3) {
+    const ids = [index.getX(i), index.getX(i + 1), index.getX(i + 2)]
+    let minU = Infinity
+    let maxU = -Infinity
+    let minV = Infinity
+    let maxV = -Infinity
+    for (const id of ids) {
+      const u = uv.getX(id)
+      const v = uv.getY(id)
+      minU = Math.min(minU, u)
+      maxU = Math.max(maxU, u)
+      minV = Math.min(minV, v)
+      maxV = Math.max(maxV, v)
+    }
+    if (maxU - minU + (maxV - minV) < 0.045) continue
+    for (const id of ids) uv.setXY(id, WATER_UV.u, WATER_UV.v)
+  }
+  uv.needsUpdate = true
+}
+
 function adopt(root: THREE.Object3D): void {
+  const river = root.name.includes('river')
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh
     if (!mesh.isMesh) return
     const source = mesh.material as THREE.MeshLambertMaterial
     if (!sharedMat) {
-      const map = source.map
-      if (map) map.colorSpace = THREE.SRGBColorSpace
-      sharedMat = new THREE.MeshLambertMaterial({ map, color: 0xffffff })
+      if (source.map) configureAtlas(source.map)
+      sharedMat = new THREE.MeshLambertMaterial({ map: source.map, color: 0xffffff })
     }
     mesh.material = sharedMat
-    mesh.castShadow = false
-    mesh.receiveShadow = false
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    if (river || mesh.name.includes('river')) repairRiverUvs(mesh)
   })
 }
 
@@ -132,6 +168,8 @@ function cloneStatic(src: THREE.Object3D): THREE.Object3D {
   dst.position.copy(src.position)
   dst.quaternion.copy(src.quaternion)
   dst.scale.copy(src.scale)
+  dst.castShadow = src.castShadow
+  dst.receiveShadow = src.receiveShadow
   for (const child of src.children) dst.add(cloneStatic(child))
   return dst
 }
@@ -175,6 +213,12 @@ export function spawnPet(name: string): PetInstance {
   }
   play('idle')
   mixer.setTime(Math.random() * 2)
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh
+    if (!mesh.isMesh) return
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+  })
   return { root, mixer, play, foot: petFoot.get(name) ?? 0 }
 }
 

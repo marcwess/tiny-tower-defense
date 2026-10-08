@@ -24,7 +24,7 @@ import {
 } from './config'
 import { Enemy } from './enemies'
 import { Fx } from './fx'
-import { buildMap, cellKey, type BuiltMap, type MapCell } from './map'
+import { buildMap, cellKey, tickDiorama, type BuiltMap, type MapCell } from './map'
 import { PET_SPOTS, Pet } from './pets'
 import { Tower } from './towers'
 import { Hud, type ActionButton, type SelectionView } from './ui'
@@ -55,6 +55,8 @@ interface Abduction {
   time: number
   beam: THREE.Object3D
   burst: THREE.Object3D
+  glow: THREE.Mesh
+  spark: number
 }
 
 type Phase = 'ready' | 'wave' | 'breather' | 'victory' | 'defeat'
@@ -93,6 +95,36 @@ function isMiddle(id: string): id is MiddleId {
 
 function isRoof(id: string): id is RoofId {
   return id === 'a' || id === 'b' || id === 'c'
+}
+
+function detectQuality(coarse: boolean): { shadows: boolean; shadowMapSize: number; pixelRatio: number } {
+  const nav = navigator as Navigator & { deviceMemory?: number }
+  const memory = nav.deviceMemory ?? 8
+  const ratio = window.devicePixelRatio || 1
+  if (memory <= 2) return { shadows: false, shadowMapSize: 0, pixelRatio: 1 }
+  if (memory <= 4) return { shadows: true, shadowMapSize: 512, pixelRatio: Math.min(ratio, coarse ? 1.25 : 1.5) }
+  return { shadows: true, shadowMapSize: 1024, pixelRatio: Math.min(ratio, coarse ? 1.5 : 1.75) }
+}
+
+function skyTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas')
+  canvas.width = 4
+  canvas.height = 256
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    const g = ctx.createLinearGradient(0, 0, 0, 256)
+    g.addColorStop(0, '#79c6f0')
+    g.addColorStop(0.42, '#b7e3f8')
+    g.addColorStop(0.72, '#f6e2c4')
+    g.addColorStop(1, '#f3c99a')
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, 4, 256)
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.magFilter = THREE.LinearFilter
+  tex.minFilter = THREE.LinearFilter
+  return tex
 }
 
 function styleBeam(root: THREE.Object3D): void {
@@ -148,10 +180,11 @@ export class Game {
   private fpsFrames = 0
   private fpsAccum = 0
   private hint: boolean
-  private target = new THREE.Vector3(3, 0.2, 4.7)
-  private distance = 20
-  private readonly pitch = 0.92
-  private readonly azimuth = 2.55
+  private target = new THREE.Vector3(3, 0.35, 4.35)
+  private distance = 16
+  private visualTime = 0
+  private readonly pitch = 0.78
+  private readonly azimuth = 2.25
   private userCam = false
   private cameraLock: { pos: THREE.Vector3; look: THREE.Vector3 } | null = null
   private pointers = new Map<number, { x: number; y: number; sx: number; sy: number }>()
@@ -168,6 +201,7 @@ export class Game {
   ) {
     const coarse = window.matchMedia('(pointer: coarse)').matches
     const capture = new URLSearchParams(location.search).has('capture')
+    const quality = detectQuality(coarse)
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,
       alpha: false,
@@ -175,20 +209,41 @@ export class Game {
       preserveDrawingBuffer: capture,
     })
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2))
-    this.camera = new THREE.PerspectiveCamera(38, 1, 0.1, 80)
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
+    this.renderer.toneMappingExposure = 1.08
+    this.renderer.setPixelRatio(quality.pixelRatio)
+    if (quality.shadows) {
+      this.renderer.shadowMap.enabled = true
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    }
+    this.camera = new THREE.PerspectiveCamera(30, 1, 0.12, 90)
     this.app.prepend(this.renderer.domElement)
     this.hint = localStorage.getItem('tiny-td-hint-v1') !== '1'
 
-    const sky = new THREE.Color(0x9fd6f2)
-    this.scene.background = sky
-    this.scene.fog = new THREE.Fog(0xb7e4f6, 24, 52)
-    this.scene.add(new THREE.HemisphereLight(0xfff6e4, 0x6ea24e, 1.2))
-    const sun = new THREE.DirectionalLight(0xffffff, 1.35)
-    sun.position.set(-6, 12, 4)
+    this.scene.background = skyTexture()
+    this.scene.fog = new THREE.Fog(0xf3d7b4, 28, 58)
+    this.scene.add(new THREE.AmbientLight(0xfff3e2, 0.38))
+    this.scene.add(new THREE.HemisphereLight(0xfff6ea, 0x7ea35a, 0.62))
+    const sun = new THREE.DirectionalLight(0xfff1d2, 1.85)
+    sun.position.set(7.5, 14, 3.5)
+    sun.target.position.set(3, 0, 5)
+    if (quality.shadows) {
+      sun.castShadow = true
+      sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize)
+      sun.shadow.camera.near = 4
+      sun.shadow.camera.far = 32
+      sun.shadow.camera.left = -8
+      sun.shadow.camera.right = 8
+      sun.shadow.camera.top = 9
+      sun.shadow.camera.bottom = -9
+      sun.shadow.bias = -0.0004
+      sun.shadow.normalBias = 0.028
+      sun.shadow.radius = 2
+    }
     this.scene.add(sun)
-    const fill = new THREE.DirectionalLight(0xcfe6ff, 0.4)
-    fill.position.set(5, 6, -6)
+    this.scene.add(sun.target)
+    const fill = new THREE.DirectionalLight(0xc5e4ff, 0.28)
+    fill.position.set(-6, 5, -4)
     this.scene.add(fill)
 
     this.highlight = new THREE.Mesh(
@@ -265,10 +320,10 @@ export class Game {
 
   private fitDistance(): number {
     const aspect = this.camera.aspect
-    if (aspect < 0.62) return 22
-    if (aspect < 0.9) return 19
-    if (aspect < 1.25) return 16.5
-    return 15
+    if (aspect < 0.62) return 16.4
+    if (aspect < 0.9) return 14.6
+    if (aspect < 1.25) return 13.4
+    return 12.6
   }
 
   private clampCamera(): void {
@@ -421,6 +476,8 @@ export class Game {
       scaled -= dt
       guard += 1
     }
+    this.visualTime += raw
+    if (this.map) tickDiorama(this.map, this.visualTime)
     this.updateCamera()
     for (const enemy of this.enemies) enemy.billboard(this.camera)
     this.renderer.render(this.scene, this.camera)
@@ -449,7 +506,11 @@ export class Game {
     } else {
       this.updateAbduction(dt)
     }
-    for (const pet of this.pets) if (pet.alive || pet.reserved) pet.update(dt)
+    const threat = this.enemies.some((enemy) => enemy.alive && enemy.pos.z < 2.6)
+    for (const pet of this.pets) {
+      if (pet.alive || pet.reserved) pet.update(dt)
+      if (pet.alive && !pet.reserved) pet.setNervous(threat)
+    }
     for (const tower of this.towers) tower.update(dt)
     this.fx.update(dt)
     if (this.hintMarker.visible) {
@@ -505,9 +566,21 @@ export class Game {
     const burst = spawnModel('enemy-ufo-beam-burst')
     styleBeam(beam)
     styleBeam(burst)
+    const glow = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.16, 0.28, 1, 16, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0xdff8ff,
+        transparent: true,
+        opacity: 0.42,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    )
+    glow.renderOrder = 4
     this.scene.add(beam)
     this.scene.add(burst)
-    this.abduction = { enemy, pet, time: 0, beam, burst }
+    this.scene.add(glow)
+    this.abduction = { enemy, pet, time: 0, beam, burst, glow, spark: 0 }
     audio.play('beam')
     this.shake = Math.max(this.shake, 0.14)
   }
@@ -535,10 +608,18 @@ export class Game {
     abduction.pet.group.rotation.y += dt * 2.2
     const height = Math.max(0.25, enemy.pos.y - petY)
     abduction.beam.position.set(home.x, petY, home.z)
-    abduction.beam.scale.set(0.28, height, 0.28)
+    abduction.beam.scale.set(0.22, height, 0.22)
     abduction.burst.position.set(home.x, petY + 0.02, home.z)
     abduction.burst.rotation.y += dt * 5
     abduction.burst.scale.setScalar(0.42 + Math.sin(abduction.time * 24) * 0.04)
+    abduction.glow.position.set(home.x, petY + height * 0.5, home.z)
+    abduction.glow.scale.set(1, height, 1)
+    abduction.glow.rotation.y += dt * 2.4
+    abduction.pet.group.rotation.z = Math.sin(abduction.time * 16) * 0.18
+    if (abduction.time - abduction.spark > 0.1) {
+      abduction.spark = abduction.time
+      this.fx.burst(home.x, petY + Math.random() * height, home.z, 0xe7fbff, 2, 0.8)
+    }
 
     if (abduction.time >= 1.7) this.finishAbduction()
   }
@@ -551,6 +632,8 @@ export class Game {
     this.scene.remove(abduction.pet.group)
     this.scene.remove(abduction.beam)
     this.scene.remove(abduction.burst)
+    this.scene.remove(abduction.glow)
+    abduction.pet.group.rotation.z = 0
     this.removeEnemy(abduction.enemy)
     this.abduction = null
     if (this.livingPets() <= 0) {
@@ -571,6 +654,8 @@ export class Game {
     if (!abduction) return
     this.scene.remove(abduction.beam)
     this.scene.remove(abduction.burst)
+    this.scene.remove(abduction.glow)
+    abduction.pet.group.rotation.z = 0
     if (saved) abduction.pet.dropHome()
     this.abduction = null
     const next = this.queue.shift()
@@ -745,7 +830,8 @@ export class Game {
       if (killed) this.pending.push(enemy)
     }
     this.fx.ring(origin.x, origin.z, 0xffb15a)
-    this.fx.burst(origin.x, origin.y, origin.z, 0xff8a3a, 16, 3.6)
+    this.fx.burst(origin.x, origin.y, origin.z, 0xffe08a, 10, 3.2)
+    this.fx.puff(origin.x, origin.y, origin.z)
   }
 
   private pending: Enemy[] = []
@@ -755,14 +841,27 @@ export class Game {
     this.pending.length = 0
   }
 
+  private flyCoins(origin: THREE.Vector3, count: number): void {
+    _v.copy(origin).project(this.camera)
+    if (_v.z > 1) return
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const x = (_v.x * 0.5 + 0.5) * rect.width + rect.left
+    const y = (-_v.y * 0.5 + 0.5) * rect.height + rect.top
+    for (let i = 0; i < count; i++) {
+      window.setTimeout(() => this.hud.flyCoin(x + (i - 1) * 12, y - i * 6), i * 60)
+    }
+  }
+
   private kill(enemy: Enemy): void {
     if (!enemy.alive) return
     enemy.alive = false
     this.kills += 1
     this.gold += enemy.reward
     this.fx.popup(enemy.pos.x, enemy.pos.y + 0.35, enemy.pos.z, `+${enemy.reward}`, '#ffe08a')
-    this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xff7a3c, 18, 4.2)
+    this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xfff2c4, 14, 3.4)
+    this.fx.puff(enemy.pos.x, enemy.pos.y + 0.15, enemy.pos.z)
     this.fx.ring(enemy.pos.x, enemy.pos.z, 0xffd27a)
+    this.flyCoins(enemy.pos, 3)
     audio.play('boom')
     this.shake = Math.max(this.shake, 0.06)
     if (this.abduction?.enemy === enemy) this.cancelAbduction(true)
@@ -972,6 +1071,7 @@ export class Game {
         actions.push({
           id: `middle-${id}`,
           label: def.label,
+          detail: def.blurb,
           cost: String(def.cost),
           enabled: this.gold >= def.cost && tower.middles.length < MAX_MIDDLES,
           tone: 'blue',
@@ -982,6 +1082,7 @@ export class Game {
         actions.push({
           id: `roof-${id}`,
           label: def.label,
+          detail: def.blurb,
           cost: String(def.cost),
           enabled: this.gold >= def.cost,
           tone: 'yellow',
@@ -992,13 +1093,14 @@ export class Game {
         actions.push({
           id,
           label: def.label,
+          detail: def.blurb,
           cost: String(def.cost),
           enabled: this.gold >= def.cost,
           tone: 'green',
         })
       }
       const refund = Math.floor(tower.spent * SELL_RATIO)
-      actions.push({ id: 'sell', label: 'Sell', cost: `+${refund}`, enabled: true, tone: 'red' })
+      actions.push({ id: 'sell', label: 'Sell', detail: 'Refund half', cost: `+${refund}`, enabled: true, tone: 'red' })
       const roof = tower.roof ? ROOFS[tower.roof].label : 'no roof'
       const weapon = tower.weapon ? WEAPONS[tower.weapon].label : 'no weapon'
       const rate = stats.cooldown < 100 ? `${(1 / stats.cooldown).toFixed(1)}/s` : '—'
@@ -1023,6 +1125,7 @@ export class Game {
           {
             id: 'base',
             label: 'Build',
+            detail: 'Place a base',
             cost: String(BASE_COST),
             enabled: this.gold >= BASE_COST && this.towers.length < MAX_TOWERS,
             tone: 'green',
@@ -1146,7 +1249,7 @@ export class Game {
     this.userCam = false
     this.cameraLock = null
     this.distance = this.fitDistance()
-    this.target.set(3, 0.2, 4.7)
+    this.target.set(3, 0.35, 4.35)
     audio.duck(false)
     this.spawnPets()
     this.syncMarker()
@@ -1217,6 +1320,16 @@ export class Game {
         enemy.group.position.copy(enemy.pos)
         const pet = this.pets.find((candidate) => candidate.alive && !candidate.reserved)
         if (pet) this.beginAbduction(enemy, pet)
+      },
+      deselect: () => {
+        this.selected = null
+        this.syncSelection()
+      },
+      select: (x: number, z: number) => {
+        const cell = this.map.cells.get(cellKey(x, z))
+        if (!cell) return
+        this.selected = cell
+        this.syncSelection()
       },
       debugWin: () => this.win(),
       debugLose: () => this.lose(),

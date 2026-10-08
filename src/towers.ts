@@ -26,6 +26,7 @@ export class Tower {
   private weaponPivot: THREE.Object3D | null = null
   private pop: THREE.Object3D | null = null
   private popT = 0
+  private popBaseY = 0
 
   constructor(
     readonly x: number,
@@ -101,8 +102,9 @@ export class Tower {
     }
 
     this.pop = pop ? newest : null
-    this.popT = pop && newest ? 0.22 : 0
-    if (this.pop) this.pop.scale.y = 0.15
+    this.popT = pop && newest ? 0.34 : 0
+    this.popBaseY = newest?.position.y ?? 0
+    if (this.pop) this.pop.scale.setScalar(0.15)
   }
 
   private clear(): void {
@@ -123,9 +125,14 @@ export class Tower {
     }
     if (this.pop && this.popT > 0) {
       this.popT = Math.max(0, this.popT - dt)
-      const k = 1 - this.popT / 0.22
-      this.pop.scale.y = 0.15 + 0.85 * (1 - (1 - k) * (1 - k))
-      if (this.popT === 0) this.pop.scale.y = 1
+      const k = 1 - this.popT / 0.34
+      const settle = 1 + Math.sin(k * Math.PI) * 0.16 * (1 - k)
+      this.pop.scale.setScalar(0.15 + 0.85 * k * settle)
+      this.pop.position.y = this.popBaseY + Math.sin(k * Math.PI) * 0.1 * (1 - k)
+      if (this.popT === 0) {
+        this.pop.scale.setScalar(1)
+        this.pop.position.y = this.popBaseY
+      }
     }
     if (this.kick > 0) {
       this.kick = Math.max(0, this.kick - dt * 4.5)

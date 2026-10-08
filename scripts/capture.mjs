@@ -71,6 +71,7 @@ try {
     api.buy(3, 4, 'base')
     api.buy(3, 4, 'ballista')
     api.startWave()
+    api.deselect()
   })
   await delay(1600)
   await page.screenshot({ path: `${OUT}/portrait_gameplay.png` })
@@ -82,17 +83,26 @@ try {
     api.buy(2, 7, 'middle-b')
     api.buy(2, 7, 'roof-b')
     api.buy(2, 7, 'cannon')
-    api.cameraFocus(2, 7, 6.2)
+    api.deselect()
+    api.cameraFocus(2, 7, 7.2)
   })
   await delay(500)
   await page.screenshot({ path: `${OUT}/stacked_tower.png` })
 
   await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.cameraFocus(3, 4.6, 15.2)
+    api.select(2, 7)
+  })
+  await delay(250)
+  await page.screenshot({ path: `${OUT}/build_panel.png` })
+
+  await page.evaluate(() => {
     window.__TINY_TD__.retry()
-    window.__TINY_TD__.cameraFocus(2.7, 0.45, 5.2)
+    window.__TINY_TD__.cameraFocus(3, 1.1, 9.2)
     window.__TINY_TD__.debugAbduct()
   })
-  await delay(620)
+  await delay(680)
   await page.screenshot({ path: `${OUT}/pet_abduction.png` })
 
   await page.evaluate(() => window.__TINY_TD__.debugWin())
@@ -113,6 +123,7 @@ try {
     window.__TINY_TD__.buy(2, 7, 'turret')
     window.__TINY_TD__.buy(2, 7, 'middle-c')
     window.__TINY_TD__.startWave()
+    window.__TINY_TD__.deselect()
   })
   await delay(900)
   await page.screenshot({ path: `${OUT}/landscape_gameplay.png` })

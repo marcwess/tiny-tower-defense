@@ -123,7 +123,7 @@ export class Enemy {
   update(dt: number, points: XZ[], time: number): boolean {
     if (this.slowTimer > 0) this.slowTimer = Math.max(0, this.slowTimer - dt)
     if (this.flash > 0) this.flash = Math.max(0, this.flash - dt)
-    this.bob += dt * (this.flying ? 2.4 : 3.2)
+    this.bob += dt * (this.flying ? 2.8 : 3.6)
     if (this.abducting) {
       this.applyFlash()
       this.syncBar()
@@ -166,10 +166,11 @@ export class Enemy {
     const seg = Math.hypot(b.x - a.x, b.z - a.z) || 1
     this.pos.set(a.x + (b.x - a.x) * this.segT, this.baseY, a.z + (b.z - a.z) * this.segT)
     this.vel.set((b.x - a.x) / seg, 0, (b.z - a.z) / seg).multiplyScalar(this.currentSpeed())
-    const bob = Math.sin(this.bob) * (this.flying ? 0.07 : 0.035)
+    const bob = Math.sin(this.bob) * (this.flying ? 0.11 : 0.055)
     this.group.position.set(this.pos.x, this.pos.y + bob, this.pos.z)
     this.model.rotation.y = Math.atan2(this.vel.x, this.vel.z)
-    this.model.rotation.z = Math.sin(time * 2 + this.id) * 0.06
+    this.model.rotation.z = Math.sin(time * 3.2 + this.bob) * 0.14
+    this.model.rotation.x = Math.sin(time * 2.1 + this.id) * 0.06
     this.bar.position.y = this.scale * 0.95 + 0.22
     this.applyFlash()
     this.syncBar()
@@ -207,13 +208,14 @@ export class Enemy {
   }
 
   private applyFlash(): void {
-    const intensity = this.flash > 0 ? 0.65 : 0
     this.model.traverse((obj) => {
       const mesh = obj as THREE.Mesh
       if (!mesh.isMesh) return
       const mat = mesh.material as THREE.MeshLambertMaterial
-      if (mat.emissive) mat.emissiveIntensity = intensity
+      if (mat.emissive) mat.emissiveIntensity = this.flash > 0 ? 1 : 0
     })
+    const pulse = 1 + (this.flash > 0 ? this.flash * 2.2 : 0)
+    this.model.scale.setScalar(this.scale * pulse)
   }
 
   private syncBar(): void {

@@ -33,6 +33,10 @@ export class Fx {
   private positions = new Float32Array(MAX * 3)
   private colors = new Float32Array(MAX * 3)
   private points: THREE.Points
+  private smoke: THREE.Points
+  private smokeParts: Particle[] = []
+  private smokePos = new Float32Array(80 * 3)
+  private smokeCol = new Float32Array(80 * 3)
   private popups: Popup[] = []
   private rings: Ring[] = []
   private ringGeo: THREE.RingGeometry
@@ -53,6 +57,22 @@ export class Fx {
     this.points = new THREE.Points(geo, mat)
     this.points.frustumCulled = false
     scene.add(this.points)
+
+    const smokeGeo = new THREE.BufferGeometry()
+    smokeGeo.setAttribute('position', new THREE.BufferAttribute(this.smokePos, 3))
+    smokeGeo.setAttribute('color', new THREE.BufferAttribute(this.smokeCol, 3))
+    this.smoke = new THREE.Points(
+      smokeGeo,
+      new THREE.PointsMaterial({
+        size: 0.55,
+        vertexColors: true,
+        transparent: true,
+        depthWrite: false,
+        sizeAttenuation: true,
+      }),
+    )
+    this.smoke.frustumCulled = false
+    scene.add(this.smoke)
 
     this.ringGeo = new THREE.RingGeometry(0.82, 1, 28)
     this.ringMat = new THREE.MeshBasicMaterial({
@@ -86,6 +106,27 @@ export class Fx {
     }
   }
 
+  puff(x: number, y: number, z: number): void {
+    for (let i = 0; i < 7; i++) {
+      if (this.smokeParts.length >= 80) this.smokeParts.shift()
+      const life = 0.45 + Math.random() * 0.4
+      const gray = 0.45 + Math.random() * 0.35
+      this.smokeParts.push({
+        life,
+        max: life,
+        x: x + (Math.random() - 0.5) * 0.15,
+        y,
+        z: z + (Math.random() - 0.5) * 0.15,
+        vx: (Math.random() - 0.5) * 0.4,
+        vy: 0.35 + Math.random() * 0.7,
+        vz: (Math.random() - 0.5) * 0.4,
+        r: gray,
+        g: gray * 0.96,
+        b: gray * 0.9,
+      })
+    }
+  }
+
   ring(x: number, z: number, color: number): void {
     const mesh = new THREE.Mesh(this.ringGeo, this.ringMat.clone())
     ;(mesh.material as THREE.MeshBasicMaterial).color.set(color)
@@ -103,7 +144,7 @@ export class Fx {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.clearRect(0, 0, 256, 96)
-    ctx.font = '700 54px "Kenney Future Narrow", "Kenney Future", sans-serif'
+    ctx.font = '700 54px "Kenney Bold", "Kenney Future", sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.lineWidth = 8
@@ -155,6 +196,7 @@ export class Fx {
     const geo = this.points.geometry
     ;(geo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true
     ;(geo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true
+    this.stepCloud(this.smokeParts, this.smokePos, this.smokeCol, 80, this.smoke, dt, 0.15)
 
     for (let i = this.popups.length - 1; i >= 0; i--) {
       const popup = this.popups[i]
@@ -182,5 +224,43 @@ export class Fx {
         this.rings.splice(i, 1)
       }
     }
+  }
+
+  private stepCloud(
+    parts: Particle[],
+    pos: Float32Array,
+    col: Float32Array,
+    max: number,
+    points: THREE.Points,
+    dt: number,
+    lift: number,
+  ): void {
+    let n = 0
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i]
+      p.life -= dt
+      if (p.life <= 0) {
+        parts.splice(i, 1)
+        continue
+      }
+      p.vy += lift * dt
+      p.x += p.vx * dt
+      p.y += p.vy * dt
+      p.z += p.vz * dt
+      const fade = p.life / p.max
+      const o = n * 3
+      pos[o] = p.x
+      pos[o + 1] = p.y
+      pos[o + 2] = p.z
+      col[o] = p.r * fade
+      col[o + 1] = p.g * fade
+      col[o + 2] = p.b * fade
+      n += 1
+      if (n >= max) break
+    }
+    for (let i = n; i < max; i++) pos[i * 3 + 1] = -50
+    const geo = points.geometry
+    ;(geo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true
+    ;(geo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true
   }
 }
