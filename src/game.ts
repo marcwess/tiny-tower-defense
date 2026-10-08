@@ -232,6 +232,7 @@ export class Game {
   private lastEffective = -10
   private lastEffX = 0
   private lastEffZ = 0
+  private effectiveStack = 0
   private highlight: THREE.Mesh
   private rangeMesh: THREE.Mesh
   private hintMarker: THREE.Sprite
@@ -588,8 +589,14 @@ export class Game {
     const bar = document.querySelector('#actions')
     const topBox = topEl?.getBoundingClientRect()
     const barBox = bar?.getBoundingClientRect()
-    const top = Math.max(48, Math.round((topBox?.bottom ?? 58) + 4))
-    const bottom = barBox && barBox.top > top + 80 ? Math.round(barBox.top - 6) : h - 64
+    let top = Math.max(48, Math.round((topBox?.bottom ?? 58) + 4))
+    let bottom = barBox && barBox.top > top + 80 ? Math.round(barBox.top - 6) : h - 64
+    if (this.phase === 'title' && w / Math.max(1, h) > 1.05) {
+      const plate = document.querySelector('#title-copy')?.getBoundingClientRect()
+      const band = document.querySelector('#title-band')?.getBoundingClientRect()
+      if (plate && plate.height > 24 && plate.bottom > top) top = Math.round(plate.bottom + 14)
+      if (band && band.top > top + 120) bottom = Math.min(bottom, Math.round(band.top - 12))
+    }
     const side = Math.max(4, Math.round(w * 0.012))
     return { w, h, l: side, t: top, r: w - side, b: Math.min(h - 8, bottom) }
   }
@@ -980,6 +987,7 @@ export class Game {
     }
     for (const tower of this.towers) tower.update(dt)
     this.fx.update(dt)
+    this.keepPopupsUnderHud()
     if (this.hintMarker.visible) {
       this.hintMarker.position.y = 1.05 + Math.sin(this.time * 4) * 0.1
     }
@@ -1362,13 +1370,21 @@ export class Game {
     if (this.time - last < 0.55) return
     const near =
       this.time - this.lastEffective < 1.2 &&
-      Math.hypot(enemy.pos.x - this.lastEffX, enemy.pos.z - this.lastEffZ) < 1.7
-    if (near) return
+      Math.hypot(enemy.pos.x - this.lastEffX, enemy.pos.z - this.lastEffZ) < 2.2
+    this.effectiveStack = near ? this.effectiveStack + 1 : 0
     this.lastEffective = this.time
     this.lastEffX = enemy.pos.x
     this.lastEffZ = enemy.pos.z
     this.effectiveAt.set(enemy.id, this.time)
-    this.popText(enemy.pos.x, enemy.pos.y + 1.15, enemy.pos.z, 'Effective!', '#b6ff8a', 1.2)
+    this.popText(
+      enemy.pos.x,
+      enemy.pos.y + 1.15,
+      enemy.pos.z,
+      'Effective!',
+      '#b6ff8a',
+      1.2,
+      this.effectiveStack * 44,
+    )
   }
 
   private splash(proj: Projectile, origin: THREE.Vector3): void {
@@ -1410,19 +1426,46 @@ export class Game {
     }
   }
 
-  /** Keep combat text inside the view, including its outline, at every zoom. */
-  private popText(x: number, y: number, z: number, text: string, color: string, life = 0.9): void {
+  /** Keep combat text inside the view and below the HUD. screenLift stacks a second popup upward. */
+  private popText(
+    x: number,
+    y: number,
+    z: number,
+    text: string,
+    color: string,
+    life = 0.9,
+    screenLift = 0,
+  ): void {
     _v.set(x, y, z).project(this.camera)
     if (_v.z > 1) {
       this.fx.popup(x, y, z, text, color, life)
       return
     }
-    const marginX = Math.min(0.46, 0.2 + text.length * 0.02)
-    const marginY = 0.16
-    _v.x = THREE.MathUtils.clamp(_v.x, -1 + marginX, 1 - marginX)
-    _v.y = THREE.MathUtils.clamp(_v.y, -1 + marginY, 1 - marginY)
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const hud = document.querySelector('#top')?.getBoundingClientRect()
+    const hudBottom = hud ? hud.bottom - rect.top : 54
+    const marginX = Math.min(rect.width * 0.42, 18 + text.length * 6.5)
+    let px = (_v.x * 0.5 + 0.5) * rect.width
+    let py = (-_v.y * 0.5 + 0.5) * rect.height
+    px = THREE.MathUtils.clamp(px, marginX, Math.max(marginX, rect.width - marginX))
+    const half = text.length > 8 ? 26 : 18
+    const minCenter = hudBottom + half + 8
+    const maxCenter = rect.height - half - 10
+    py -= screenLift
+    if (py < minCenter) py = Math.min(maxCenter, minCenter + screenLift)
+    py = THREE.MathUtils.clamp(py, minCenter, Math.max(minCenter, maxCenter))
+    _v.x = (px / rect.width) * 2 - 1
+    _v.y = -((py / rect.height) * 2 - 1)
     _v.unproject(this.camera)
     this.fx.popup(_v.x, _v.y, _v.z, text, color, life)
+  }
+
+  private keepPopupsUnderHud(): void {
+    const canvas = this.renderer.domElement.getBoundingClientRect()
+    if (canvas.height < 2) return
+    const hud = document.querySelector('#top')?.getBoundingClientRect()
+    const minTop = (hud ? hud.bottom - canvas.top : 54) + 6
+    this.fx.keepUnderHud(this.camera, canvas.height, minTop)
   }
 
   private kill(enemy: Enemy): void {
@@ -1907,6 +1950,7 @@ export class Game {
     target: { l: number; t: number; r: number; b: number }
     avoid: Array<{ l: number; t: number; r: number; b: number }>
     lane: Array<{ x: number; y: number }>
+    pin?: 'down' | 'up' | 'left' | 'right'
   } | null {
     if (this.tutorStep < 1 || this.tutorStep > 5 || this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') {
       return null
@@ -1916,7 +1960,8 @@ export class Game {
     const lane = this.map.points
       .map((point) => this.projectWorld(point.x, 0.8, point.z))
       .filter((point): point is { x: number; y: number } => !!point)
-    return { text: COACH[this.tutorStep], target, avoid: this.coachAvoid(), lane }
+    const pin = this.tutorStep === 2 || this.tutorStep === 5 ? 'down' : undefined
+    return { text: COACH[this.tutorStep], target, avoid: this.coachAvoid(), lane, pin }
   }
 
   private coachTarget(): { l: number; t: number; r: number; b: number } | null {
@@ -1950,15 +1995,15 @@ export class Game {
     const boxes: Array<{ l: number; t: number; r: number; b: number } | null> = []
     boxes.push(this.clientBox(document.querySelector('#top')))
     if (this.tutorStep === 2) {
-      boxes.push(this.clientBox(document.querySelector('#card')))
-      boxes.push(this.clientBox(document.querySelector('#actions')))
+      boxes.push(this.clientBox(document.querySelector('#preview')))
+      boxes.push(this.clientBox(document.querySelector('#card-title')))
     }
     if (this.tutorStep === 4) {
       const spawn = this.map.points[1] ?? this.map.points[0]
       boxes.push(this.worldBox(spawn.x, spawn.z, 1.2, 56))
       boxes.push(this.clientBox(document.querySelector('#preview')))
     }
-    if (this.tutorStep === 3 || this.tutorStep === 5) {
+    if (this.tutorStep === 3) {
       boxes.push(this.clientBox(document.querySelector('#preview')))
     }
     return boxes.filter((box): box is { l: number; t: number; r: number; b: number } => !!box)
@@ -2106,6 +2151,7 @@ export class Game {
     this.waveLog = []
     this.effectiveAt.clear()
     this.lastEffective = -10
+    this.effectiveStack = 0
     this.bannerTitle = null
     this.bannerChips = null
     this.bannerT = 0
@@ -2131,10 +2177,11 @@ export class Game {
     this.tutorStep = mode === 'play' && level.id === 1 && !tutorialSeen() ? 1 : 0
     audio.duck(false)
     this.spawnPets()
-    this.applyFraming(true)
     this.syncMarker()
     this.syncSelection()
-    this.refreshHud()
+    if (mode === 'title') this.refreshHud()
+    this.applyFraming(true)
+    if (mode !== 'title') this.refreshHud()
   }
 
   private clearActors(): void {
@@ -2315,9 +2362,10 @@ export class Game {
         this.phase = 'wave'
         const scout = this.spawnEnemy('scout', 1, 0.48)
         const tank = this.spawnEnemy('tank', 1, 0.4)
-        this.popText(scout.pos.x, scout.pos.y + 0.9, scout.pos.z, 'Effective!', '#b6ff8a', 30)
-        this.popText(scout.pos.x + 0.15, scout.pos.y + 0.45, scout.pos.z, '14', '#fff6ea', 30)
-        this.popText(tank.pos.x, tank.pos.y + 0.5, tank.pos.z, '9', '#fff6ea', 30)
+        this.popText(scout.pos.x, scout.pos.y + 1.05, scout.pos.z, 'Effective!', '#b6ff8a', 30)
+        this.popText(scout.pos.x + 0.04, scout.pos.y + 1.05, scout.pos.z + 0.02, 'Effective!', '#b6ff8a', 30, 46)
+        this.popText(scout.pos.x + 0.18, scout.pos.y + 0.42, scout.pos.z, '14', '#fff6ea', 30)
+        this.popText(tank.pos.x, tank.pos.y + 0.45, tank.pos.z, '9', '#fff6ea', 30)
         this.refreshHud()
       },
       deselect: () => {

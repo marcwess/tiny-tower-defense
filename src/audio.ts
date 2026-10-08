@@ -64,11 +64,13 @@ class AudioBus {
   musicOn = true
   private unlocked = false
   private built = false
+  private loading: Promise<void> | null = null
   private pools = new Map<SfxName, HTMLAudioElement[]>()
   private cursor = new Map<SfxName, number>()
   private lastLaser = 0
   private lastHit = 0
   private music: HTMLAudioElement | null = null
+  private readonly blobs = new Map<string, Promise<string>>()
 
   constructor() {
     const settings = loadSettings()
@@ -77,32 +79,75 @@ class AudioBus {
     this.muted = !this.sound && !this.musicOn
   }
 
-  /** Create the audio elements on the first gesture. Nothing is fetched before that. */
-  private ensure(): void {
-    if (this.built) return
-    this.built = true
+  /** One network fetch per file. Pool elements play the cached blob and never restart a download. */
+  private blobUrl(path: string): Promise<string> {
+    const url = asset(path)
+    let pending = this.blobs.get(url)
+    if (!pending) {
+      pending = fetch(url)
+        .then((res) => {
+          if (!res.ok) throw new Error(`audio ${res.status}`)
+          return res.blob()
+        })
+        .then((blob) => URL.createObjectURL(blob))
+        .catch((error) => {
+          this.blobs.delete(url)
+          throw error
+        })
+      this.blobs.set(url, pending)
+    }
+    return pending
+  }
+
+  private ensure(): Promise<void> {
+    if (this.built) return Promise.resolve()
+    if (!this.loading) {
+      this.loading = this.build()
+        .then(() => {
+          this.built = true
+        })
+        .catch(() => {
+          this.loading = null
+        })
+    }
+    return this.loading
+  }
+
+  private async build(): Promise<void> {
+    const names = Object.keys(FILES) as Array<SfxName | 'music'>
+    const urls = await Promise.all(names.map((name) => this.blobUrl(FILES[name])))
+    const byName = new Map<string, string>()
+    names.forEach((name, index) => byName.set(name, urls[index]))
     for (const name of Object.keys(VOLUME) as SfxName[]) {
       const size = name === 'laser' || name === 'hit' ? 4 : 2
+      const src = byName.get(name)
+      if (!src) continue
       const pool: HTMLAudioElement[] = []
       for (let i = 0; i < size; i++) {
-        const el = new Audio(asset(FILES[name]))
+        const el = new Audio()
         el.preload = 'auto'
+        el.src = src
         pool.push(el)
       }
       this.pools.set(name, pool)
       this.cursor.set(name, 0)
     }
-    this.music = new Audio(asset(FILES.music))
-    this.music.loop = true
-    this.music.preload = 'auto'
-    this.music.volume = 0.28
+    const musicSrc = byName.get('music')
+    if (musicSrc) {
+      this.music = new Audio()
+      this.music.preload = 'auto'
+      this.music.src = musicSrc
+      this.music.loop = true
+      this.music.volume = 0.28
+    }
   }
 
   unlock(): void {
-    this.ensure()
-    if (this.unlocked) return
+    const first = !this.unlocked
     this.unlocked = true
-    if (this.musicOn) this.startMusic()
+    void this.ensure().then(() => {
+      if (first && this.built && this.musicOn) this.startMusic()
+    })
   }
 
   private startMusic(): void {
@@ -120,9 +165,13 @@ class AudioBus {
     this.sound = sound
     this.musicOn = musicOn
     this.remember()
-    if (!this.built) return
-    if (!this.musicOn) this.music?.pause()
-    else if (this.unlocked) this.startMusic()
+    const sync = () => {
+      if (!this.built) return
+      if (!this.musicOn) this.music?.pause()
+      else if (this.unlocked) this.startMusic()
+    }
+    if (this.built) sync()
+    else if (this.loading) void this.loading.then(sync)
   }
 
   toggleMute(): boolean {
@@ -133,6 +182,10 @@ class AudioBus {
     if (this.built) {
       if (turningOff) this.music?.pause()
       else if (this.unlocked) this.startMusic()
+    } else if (!turningOff && this.loading) {
+      void this.loading.then(() => {
+        if (this.built && this.unlocked && this.musicOn) this.startMusic()
+      })
     }
     return this.muted
   }
@@ -144,6 +197,16 @@ class AudioBus {
 
   play(name: SfxName): void {
     if (!this.sound || !this.unlocked) return
+    if (!this.built) {
+      void this.ensure().then(() => {
+        if (this.built) this.playNow(name)
+      })
+      return
+    }
+    this.playNow(name)
+  }
+
+  private playNow(name: SfxName): void {
     const now = performance.now()
     if (name === 'laser' && now - this.lastLaser < 80) return
     if (name === 'hit' && now - this.lastHit < 50) return
@@ -155,10 +218,12 @@ class AudioBus {
     this.cursor.set(name, (index + 1) % pool.length)
     const el = pool[index]
     el.volume = VOLUME[name]
-    try {
-      el.currentTime = 0
-    } catch {
-      /* not seekable yet */
+    if (el.readyState >= 1) {
+      try {
+        el.currentTime = 0
+      } catch {
+        /* not seekable yet */
+      }
     }
     void el.play().catch(() => {})
   }

@@ -41,6 +41,8 @@ export interface CoachView {
   target: CoachBox
   avoid: CoachBox[]
   lane: Array<{ x: number; y: number }>
+  /** Keep the arrow on this side of the bubble so it stays on the real control. */
+  pin?: 'down' | 'up' | 'left' | 'right'
 }
 
 export interface HudState {
@@ -540,7 +542,61 @@ export class Hud {
     this.coachEl.style.top = `${spot.y}px`
   }
 
+  /** Arrow tip a few pixels inside the target, on the pinned side. */
+  private placePinned(coach: CoachView): { x: number; y: number; side: string } {
+    const bubbleW = this.coachEl.offsetWidth || 220
+    const bubbleH = this.coachEl.offsetHeight || 96
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    const margin = 8
+    const side = coach.pin ?? 'down'
+    const target = coach.target
+    const cx = (target.l + target.r) / 2
+    const cy = (target.t + target.b) / 2
+    let x = cx - bubbleW / 2
+    let y = cy - bubbleH / 2
+    // Sit the arrow body on the control, not on the seam above it.
+    if (side === 'down') y = target.t + 16 - bubbleH
+    else if (side === 'up') y = target.b - 4
+    else if (side === 'right') x = target.l + 4 - bubbleW
+    else x = target.r - 4
+    x = Math.min(vw - margin - bubbleW, Math.max(margin, x))
+    y = Math.min(vh - margin - bubbleH, Math.max(margin, y))
+    if (side === 'down' && this.hitsAvoid(x, y, bubbleW, bubbleH, coach.avoid)) {
+      const altX = Math.max(margin, target.l - 6 - bubbleW)
+      const altY = Math.min(vh - margin - bubbleH, Math.max(margin, cy - bubbleH / 2))
+      const tipX = altX + bubbleW + 8
+      const onTarget = tipX > target.l + 4 && tipX < target.r - 2
+      if (onTarget && !this.hitsAvoid(altX, altY, bubbleW, bubbleH, coach.avoid)) {
+        this.aimArrow('right', altX, bubbleW, cx)
+        return { x: altX, y: altY, side: 'right' }
+      }
+    }
+    this.aimArrow(side, x, bubbleW, cx)
+    return { x, y, side }
+  }
+
+  private hitsAvoid(x: number, y: number, w: number, h: number, avoid: CoachBox[]): boolean {
+    const rect = { l: x, t: y, r: x + w, b: y + h }
+    return avoid.some((box) => this.boxesOverlap(rect, box))
+  }
+
+  private aimArrow(side: string, x: number, bubbleW: number, cx: number): void {
+    const arrow = this.coachEl.querySelector('#coach-arrow')
+    if (!(arrow instanceof HTMLElement)) return
+    arrow.style.left = ''
+    arrow.style.right = ''
+    arrow.style.top = ''
+    arrow.style.bottom = ''
+    if (side === 'down' || side === 'up') {
+      const rel = (cx - x) / bubbleW
+      arrow.style.left = `${Math.min(78, Math.max(22, rel * 100))}%`
+      arrow.style.right = 'auto'
+    }
+  }
+
   private placeCoach(coach: CoachView): { x: number; y: number; side: string } {
+    if (coach.pin) return this.placePinned(coach)
     const bubbleW = this.coachEl.offsetWidth || 220
     const bubbleH = this.coachEl.offsetHeight || 96
     const vw = window.innerWidth
@@ -595,18 +651,7 @@ export class Hud {
     const by = best.y + bubbleH / 2
     const side = Math.abs(cx - bx) > Math.abs(cy - by) ? (cx > bx ? 'right' : 'left') : cy > by ? 'down' : 'up'
     best.side = side
-    const arrow = this.coachEl.querySelector('#coach-arrow')
-    if (arrow instanceof HTMLElement) {
-      arrow.style.left = ''
-      arrow.style.right = ''
-      arrow.style.top = ''
-      arrow.style.bottom = ''
-      if (side === 'down' || side === 'up') {
-        const rel = (cx - best.x) / bubbleW
-        arrow.style.left = `${Math.min(78, Math.max(22, rel * 100))}%`
-        arrow.style.right = 'auto'
-      }
-    }
+    this.aimArrow(side, best.x, bubbleW, cx)
     return best
   }
 

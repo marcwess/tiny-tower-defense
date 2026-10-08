@@ -61,6 +61,12 @@ try {
     deviceScaleFactor: 1,
   })
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`))
+  const abortedAudio = []
+  page.on('requestfailed', (request) => {
+    const url = request.url()
+    if (!url.includes('/assets/audio/')) return
+    abortedAudio.push(`${request.failure()?.errorText ?? 'failed'} ${url}`)
+  })
   let glCopies = 0
   page.on('console', (msg) => {
     const text = msg.text()
@@ -487,8 +493,10 @@ try {
   await finishLevel(2)
   await finishLevel(3)
 
+  if (abortedAudio.length) throw new Error(`audio downloads were cancelled:\n${abortedAudio.join('\n')}`)
   if (errors.length) throw new Error(errors.join('\n'))
   console.log('glCopySubTexture warnings', glCopies)
+  console.log('aborted audio', abortedAudio.length)
   console.log('playthrough ok')
 } catch (error) {
   code = 1
