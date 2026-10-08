@@ -114,7 +114,7 @@ const MEADOW_WAVES: WaveDef[] = [
   },
   {
     groups: [
-      { kind: 'boss', count: 1, interval: 0.2, hpMul: 0.78 },
+      { kind: 'boss', count: 1, interval: 0.2, hpMul: 1.4 },
       { kind: 'swarm', count: 14, interval: 0.18 },
       { kind: 'tank', count: 2, interval: 1.0 },
       { kind: 'shield', count: 2, interval: 0.7 },
