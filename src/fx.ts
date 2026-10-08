@@ -400,11 +400,12 @@ export class Fx {
       const p = this.parts[i]
       p.life -= dt
       if (p.life <= 0) {
-        const last = this.parts.length - 1
-        this.parts[i] = this.parts[last]
-        this.parts.pop()
+        const last = this.parts.pop()
+        if (last && i < this.parts.length) {
+          this.parts[i] = last
+          i += 1
+        }
         this.partFree.push(p)
-        i += 1
         continue
       }
       p.vy -= dt * 2.2
@@ -493,11 +494,12 @@ export class Fx {
       const p = parts[i]
       p.life -= dt
       if (p.life <= 0) {
-        const last = parts.length - 1
-        parts[i] = parts[last]
-        parts.pop()
+        const last = parts.pop()
+        if (last && i < parts.length) {
+          parts[i] = last
+          i += 1
+        }
         this.partFree.push(p)
-        i += 1
         continue
       }
       p.vy += lift * dt

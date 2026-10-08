@@ -518,8 +518,8 @@ export class Hud {
         const spread = count <= 2 ? 1.15 : 0.72
         const angle = -Math.PI / 2 + (index - (count - 1) / 2) * spread
         const radius = count <= 2 ? 74 : 86
-        button.style.setProperty('--rx', `${Math.cos(angle) * radius}px`)
-        button.style.setProperty('--ry', `${Math.sin(angle) * radius}px`)
+        button.style.left = `${Math.cos(angle) * radius}px`
+        button.style.top = `${Math.sin(angle) * radius}px`
         const thumb = action.id === 'upgrade' || action.id === 'sell' ? '' : pieceThumbnail(action.id)
         if (thumb) {
           const img = document.createElement('img')

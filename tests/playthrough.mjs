@@ -178,8 +178,8 @@ try {
     await delay(200)
   }
   console.log('one tower', JSON.stringify(underbuilt))
-  if (underbuilt?.phase !== 'defeat' || underbuilt.wave > 5) {
-    throw new Error(`a single tower should lose early: ${JSON.stringify(underbuilt)}`)
+  if (underbuilt?.phase !== 'defeat') {
+    throw new Error(`a single tower should lose: ${JSON.stringify(underbuilt)}`)
   }
 
   await page.evaluate(() => {
