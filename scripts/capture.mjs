@@ -695,9 +695,14 @@ try {
   await reportBoard(page, '320 level 1', { minWidth: 0.9 })
   await page.screenshot({ path: `${OUT}/gameplay_320x568.png` })
   await page.screenshot({ path: `${OUT}/level1_320.png` })
+  for (const id of [2, 3]) {
+    await page.evaluate((level) => window.__TINY_TD__.startLevel(level), id)
+    await delay(200)
+    await reportBoard(page, `320 level ${id}`, { minWidth: 0.9 })
+  }
   await page.evaluate(() => {
     const api = window.__TINY_TD__
-    api.retry()
+    api.startLevel(1)
     api.setTimeScale(0)
     const hint = api.getState().hint
     api.buy(hint.x, hint.z, 'base')
