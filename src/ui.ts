@@ -555,7 +555,8 @@ export class Hud {
     const cy = (target.t + target.b) / 2
     let x = cx - bubbleW / 2
     let y = cy - bubbleH / 2
-    if (side === 'down') y = target.t + 4 - bubbleH
+    // Sit the arrow body on the control, not on the seam above it.
+    if (side === 'down') y = target.t + 16 - bubbleH
     else if (side === 'up') y = target.b - 4
     else if (side === 'right') x = target.l + 4 - bubbleW
     else x = target.r - 4
