@@ -53,6 +53,8 @@ export class Fx {
   private smokePos = new Float32Array(80 * 3)
   private smokeCol = new Float32Array(80 * 3)
   private popups: Popup[] = []
+  private readonly popA = new THREE.Vector3()
+  private readonly popB = new THREE.Vector3()
   private popupFree: Popup[] = []
   private chunks: Chunk[] = []
   private chunkFree: Chunk[] = []
@@ -239,6 +241,30 @@ export class Fx {
     slot.vy = 0.65
     slot.active = true
     this.popups.push(slot)
+  }
+
+  /**
+   * Slide any combat sprite whose top sits in the HUD back down, and stop it rising.
+   * minTop is a canvas pixel measured from the top of the view.
+   */
+  keepUnderHud(camera: THREE.Camera, viewHeight: number, minTop: number): void {
+    if (viewHeight < 2) return
+    camera.updateMatrixWorld()
+    for (const popup of this.popups) {
+      const pos = popup.sprite.position
+      this.popA.copy(pos).project(camera)
+      if (this.popA.z > 1) continue
+      const half = popup.sprite.scale.y * 0.5
+      this.popB.setFromMatrixColumn(camera.matrixWorld, 1).setLength(half).add(pos)
+      this.popB.project(camera)
+      const top = (-this.popB.y * 0.5 + 0.5) * viewHeight
+      if (top >= minTop) continue
+      const center = (-this.popA.y * 0.5 + 0.5) * viewHeight
+      const next = center + (minTop - top)
+      this.popA.y = -((next / viewHeight) * 2 - 1)
+      popup.sprite.position.copy(this.popA.unproject(camera))
+      popup.vy = 0
+    }
   }
 
   /** Drop floating combat text, debris, and rings. Used when a round ends. */

@@ -573,28 +573,33 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
   align-items: center;
   justify-content: center;
   background: rgba(42, 36, 28, 0.28);
-  padding: 8px;
+  padding:
+    calc(18px + env(safe-area-inset-top))
+    calc(16px + env(safe-area-inset-right))
+    calc(20px + env(safe-area-inset-bottom))
+    calc(16px + env(safe-area-inset-left));
   overflow: auto;
 }
 
 .sheet {
   width: min(420px, 100%);
-  max-height: calc(100vh - 16px);
-  max-height: calc(100dvh - 16px);
+  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 10px 12px 12px;
+  gap: 6px;
+  padding: 22px 16px 20px;
   background: var(--panel) center / 100% 100% no-repeat;
 }
 
 .sheet h2 {
-  margin: 0 0 4px;
+  margin: 4px 0 8px;
+  padding-top: 0.12em;
   font-family: 'Kenney Thick', 'Kenney Bold', sans-serif;
   font-size: 22px;
   font-weight: 400;
-  line-height: 1.2;
+  line-height: 1.4;
   text-align: center;
 }
 
@@ -622,7 +627,12 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
 
 .quality button.pressed { background: #ffe7a3; }
 
-#sheet-close { background-image: var(--btn-blue); background-size: 100% 100%; }
+#sheet-close {
+  margin-top: 4px;
+  margin-bottom: 2px;
+  background-image: var(--btn-blue);
+  background-size: 100% 100%;
+}
 
 .end-card, #loading {
   width: min(420px, 100%);
@@ -718,16 +728,17 @@ h1 {
 }
 
 @media (max-height: 620px) {
-  .sheet { gap: 4px; padding: 8px 10px 10px; }
-  .sheet h2 { font-size: 18px; margin: 0; }
+  #sheet { padding: 16px 12px 18px; }
+  .sheet { gap: 5px; padding: 18px 14px 16px; max-height: calc(100dvh - 36px); }
+  .sheet h2 { font-size: 18px; margin: 2px 0 6px; padding-top: 0.1em; }
   .sheet button, .quality button { min-height: 32px; font-size: 13px; }
-  #sheet-close { min-height: 40px; }
+  #sheet-close { min-height: 40px; margin-bottom: 2px; }
 }
 
 @media (min-width: 900px) {
   #top, #dock { zoom: 1.2; }
-  #title h1 span { font-size: 64px; }
-  #title-copy { padding: 10px 28px 14px; }
+  #title h1 span { font-size: 52px; }
+  #title-copy { padding: 6px 22px 8px; }
   #title-band { width: min(860px, 86vw); padding: 16px; gap: 12px; }
   #play { min-height: 68px; font-size: 28px; }
   .level { padding: 16px 10px 12px; }
@@ -753,7 +764,7 @@ h1 {
 
 @media (min-width: 1200px) {
   #top, #dock { zoom: 1.35; }
-  #title h1 span { font-size: 76px; }
+  #title h1 span { font-size: 58px; }
   #play { min-height: 76px; font-size: 32px; }
   .level-name { font-size: 26px; }
   .level.locked .level-name { font-size: 22px; }

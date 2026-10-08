@@ -94,20 +94,45 @@ async function reportBoard(page, label, opts = {}) {
   return board
 }
 
+function boxesOverlap(a, b) {
+  return a.left < b.r && a.right > b.l && a.top < b.b && a.bottom > b.t
+}
+
+function arrowHits(arrow, target) {
+  if (!arrow || !target) return false
+  const tipY = arrow.b - 2
+  const tipX = (arrow.l + arrow.r) / 2
+  return tipY > target.t + 1 && tipY < target.b - 1 && tipX > target.l + 1 && tipX < target.r - 1
+}
+
 async function assertCoach(page, label) {
   const coach = await page.evaluate(() => {
     const bubble = document.querySelector('#coach')
-    const card = document.querySelector('#card')
     if (!(bubble instanceof HTMLElement) || bubble.hidden) return null
     const box = bubble.getBoundingClientRect()
-    const panel = card instanceof HTMLElement && !card.hidden ? card.getBoundingClientRect() : null
+    const rect = (node) => {
+      if (!(node instanceof HTMLElement) || node.hidden) return null
+      const r = node.getBoundingClientRect()
+      if (r.width < 2 || r.height < 2) return null
+      return { t: r.top, b: r.bottom, l: r.left, r: r.right }
+    }
+    const preview = rect(document.querySelector('#preview'))
+    const start = rect(document.querySelector('#start'))
+    const arrowEl = document.querySelector('#coach-arrow')
+    const arrow = arrowEl instanceof HTMLElement ? rect(arrowEl) : null
+    const weapons = [...document.querySelectorAll('[data-part="turret"], [data-part="ballista"], [data-part="cannon"], [data-part="catapult"]')]
+      .map((node) => ({ id: node.dataset.part, ...rect(node) }))
+      .filter((item) => item.t != null)
     return {
       side: bubble.dataset.side ?? '',
       top: box.top,
       bottom: box.bottom,
       left: box.left,
       right: box.right,
-      cardTop: panel ? panel.top : null,
+      preview,
+      start,
+      arrow,
+      weapons,
       w: window.innerWidth,
       h: window.innerHeight,
     }
@@ -117,9 +142,15 @@ async function assertCoach(page, label) {
     throw new Error(`${label} bubble is off screen: ${JSON.stringify(coach)}`)
   }
   if (label.includes('step 2')) {
-    if (coach.side !== 'down') throw new Error(`${label} should point down at the weapons: ${coach.side}`)
-    if (coach.cardTop != null && coach.bottom > coach.cardTop + 8) {
-      throw new Error(`${label} bubble covers the weapon row: ${JSON.stringify(coach)}`)
+    const hit = (coach.weapons ?? []).find((weapon) => arrowHits(coach.arrow, weapon))
+    if (!hit) throw new Error(`${label} arrow missed the weapon buttons: ${JSON.stringify(coach.arrow)}`)
+    if (coach.preview && boxesOverlap(coach, coach.preview)) {
+      throw new Error(`${label} bubble covers the preview chip: ${JSON.stringify(coach)}`)
+    }
+  }
+  if (label.includes('step 5')) {
+    if (!arrowHits(coach.arrow, coach.start)) {
+      throw new Error(`${label} arrow missed Call wave: ${JSON.stringify({ arrow: coach.arrow, start: coach.start })}`)
     }
   }
   return coach
@@ -419,6 +450,7 @@ try {
   })
   await delay(250)
   await page.screenshot({ path: `${OUT}/portrait_matchup.png` })
+  await page.screenshot({ path: `${OUT}/effective_pair.png` })
 
   await page.evaluate(() => {
     const api = window.__TINY_TD__
@@ -600,6 +632,8 @@ try {
   await page.evaluate(() => window.__TINY_TD__.debugCoach(5))
   await delay(200)
   await page.screenshot({ path: `${OUT}/tutorial_5.png` })
+  await page.screenshot({ path: `${OUT}/tut_390_step5.png` })
+  await assertCoach(page, '390 step 5')
 
   await page.evaluate(() => {
     const api = window.__TINY_TD__
@@ -644,13 +678,30 @@ try {
   await delay(200)
   await page.screenshot({ path: `${OUT}/settings.png` })
   const settingsFit = await page.evaluate(() => {
+    const sheet = document.querySelector('.sheet')
+    const heading = document.querySelector('.sheet h2')
     const close = document.querySelector('#sheet-close')
-    if (!close) return null
+    if (!(sheet instanceof HTMLElement) || !(heading instanceof HTMLElement) || !(close instanceof HTMLElement)) return null
+    const panel = sheet.getBoundingClientRect()
+    const title = heading.getBoundingClientRect()
     const box = close.getBoundingClientRect()
-    return { top: box.top, bottom: box.bottom, height: window.innerHeight }
+    return {
+      h2Inset: title.top - panel.top,
+      closeInset: panel.bottom - box.bottom,
+      closeBottom: box.bottom,
+      h2Top: title.top,
+      height: window.innerHeight,
+    }
   })
-  if (!settingsFit || settingsFit.bottom > settingsFit.height - 4 || settingsFit.top < 0) {
-    throw new Error(`settings close is clipped: ${JSON.stringify(settingsFit)}`)
+  console.log('settings 390', JSON.stringify(settingsFit))
+  if (
+    !settingsFit ||
+    settingsFit.closeBottom > settingsFit.height - 12 ||
+    settingsFit.h2Top < 12 ||
+    settingsFit.h2Inset < 16 ||
+    settingsFit.closeInset < 14
+  ) {
+    throw new Error(`settings padding is tight: ${JSON.stringify(settingsFit)}`)
   }
 
   await page.locator('#sheet-close').click()
@@ -728,16 +779,38 @@ try {
   await delay(200)
   await assertCoach(page, '320 step 4')
   await page.screenshot({ path: `${OUT}/tut_320_step4.png` })
+  await page.evaluate(() => window.__TINY_TD__.debugCoach(5))
+  await delay(200)
+  await assertCoach(page, '320 step 5')
+  await page.screenshot({ path: `${OUT}/tut_320_step5.png` })
   await page.evaluate(() => window.__TINY_TD__.debugSettings())
   await delay(200)
   const settingsSmall = await page.evaluate(() => {
+    const sheet = document.querySelector('.sheet')
+    const heading = document.querySelector('.sheet h2')
     const close = document.querySelector('#sheet-close')
-    if (!close) return null
+    if (!(sheet instanceof HTMLElement) || !(heading instanceof HTMLElement) || !(close instanceof HTMLElement)) return null
+    const panel = sheet.getBoundingClientRect()
+    const title = heading.getBoundingClientRect()
     const box = close.getBoundingClientRect()
-    return { top: box.top, bottom: box.bottom, height: window.innerHeight, width: window.innerWidth }
+    return {
+      h2Inset: title.top - panel.top,
+      closeInset: panel.bottom - box.bottom,
+      closeBottom: box.bottom,
+      h2Top: title.top,
+      height: window.innerHeight,
+      width: window.innerWidth,
+    }
   })
-  if (!settingsSmall || settingsSmall.bottom > settingsSmall.height - 2) {
-    throw new Error(`settings clipped at 320x568: ${JSON.stringify(settingsSmall)}`)
+  console.log('settings 320', JSON.stringify(settingsSmall))
+  if (
+    !settingsSmall ||
+    settingsSmall.closeBottom > settingsSmall.height - 12 ||
+    settingsSmall.h2Top < 12 ||
+    settingsSmall.h2Inset < 14 ||
+    settingsSmall.closeInset < 12
+  ) {
+    throw new Error(`settings padding is tight at 320x568: ${JSON.stringify(settingsSmall)}`)
   }
   await page.screenshot({ path: `${OUT}/settings_320x568.png` })
 
@@ -746,6 +819,23 @@ try {
   await page.evaluate(() => window.__TINY_TD__.debugTitle())
   await delay(600)
   await page.screenshot({ path: `${OUT}/desktop_title.png` })
+  const titleFit = await page.evaluate(() => {
+    const plate = document.querySelector('#title-copy')
+    if (!(plate instanceof HTMLElement)) return null
+    const box = plate.getBoundingClientRect()
+    const api = window.__TINY_TD__
+    const samples = [
+      api.project(1, 10.2, 0.85),
+      api.project(5.1, 8.6, 0.85),
+      api.project(3, 9.4, 0.9),
+    ].filter(Boolean)
+    const boardTop = samples.length ? Math.min(...samples.map((point) => point.y)) : null
+    return { plateBottom: box.bottom, boardTop, samples }
+  })
+  console.log('desktop title', JSON.stringify(titleFit))
+  if (!titleFit || titleFit.boardTop == null || titleFit.boardTop < titleFit.plateBottom + 4) {
+    throw new Error(`desktop title plate covers the board: ${JSON.stringify(titleFit)}`)
+  }
   await page.evaluate(() => {
     const api = window.__TINY_TD__
     api.startLevel(3)
