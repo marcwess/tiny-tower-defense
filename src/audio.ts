@@ -1,4 +1,5 @@
 import { asset } from './assets'
+import { loadSettings } from './progress'
 
 type SfxName =
   | 'click'
@@ -57,8 +58,12 @@ const VOLUME: Record<SfxName, number> = {
 const MUTE_KEY = 'tiny-td-muted'
 
 class AudioBus {
+  /** True when both effects and music are off. The HUD speaker uses this. */
   muted = false
+  sound = true
+  musicOn = true
   private unlocked = false
+  private built = false
   private pools = new Map<SfxName, HTMLAudioElement[]>()
   private cursor = new Map<SfxName, number>()
   private lastLaser = 0
@@ -66,7 +71,16 @@ class AudioBus {
   private music: HTMLAudioElement | null = null
 
   constructor() {
-    this.muted = localStorage.getItem(MUTE_KEY) === '1'
+    const settings = loadSettings()
+    this.sound = settings.sound
+    this.musicOn = settings.music
+    this.muted = !this.sound && !this.musicOn
+  }
+
+  /** Create the audio elements on the first gesture. Nothing is fetched before that. */
+  private ensure(): void {
+    if (this.built) return
+    this.built = true
     for (const name of Object.keys(VOLUME) as SfxName[]) {
       const size = name === 'laser' || name === 'hit' ? 4 : 2
       const pool: HTMLAudioElement[] = []
@@ -85,36 +99,51 @@ class AudioBus {
   }
 
   unlock(): void {
+    this.ensure()
     if (this.unlocked) return
     this.unlocked = true
-    if (!this.muted) this.startMusic()
+    if (this.musicOn) this.startMusic()
   }
 
   private startMusic(): void {
-    if (!this.music || this.muted) return
+    if (!this.music || !this.musicOn) return
     this.music.volume = 0.28
     void this.music.play().catch(() => {})
   }
 
-  toggleMute(): boolean {
-    this.muted = !this.muted
+  private remember(): void {
+    this.muted = !this.sound && !this.musicOn
     localStorage.setItem(MUTE_KEY, this.muted ? '1' : '0')
-    if (!this.music) return this.muted
-    if (this.muted) {
-      this.music.pause()
-    } else if (this.unlocked) {
-      this.startMusic()
+  }
+
+  apply(sound: boolean, musicOn: boolean): void {
+    this.sound = sound
+    this.musicOn = musicOn
+    this.remember()
+    if (!this.built) return
+    if (!this.musicOn) this.music?.pause()
+    else if (this.unlocked) this.startMusic()
+  }
+
+  toggleMute(): boolean {
+    const turningOff = this.sound || this.musicOn
+    this.sound = !turningOff
+    this.musicOn = !turningOff
+    this.remember()
+    if (this.built) {
+      if (turningOff) this.music?.pause()
+      else if (this.unlocked) this.startMusic()
     }
     return this.muted
   }
 
   duck(forJingle: boolean): void {
-    if (!this.music) return
+    if (!this.music || !this.musicOn) return
     this.music.volume = forJingle ? 0.08 : 0.28
   }
 
   play(name: SfxName): void {
-    if (this.muted || !this.unlocked) return
+    if (!this.sound || !this.unlocked) return
     const now = performance.now()
     if (name === 'laser' && now - this.lastLaser < 80) return
     if (name === 'hit' && now - this.lastHit < 50) return

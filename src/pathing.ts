@@ -40,7 +40,8 @@ export function rotateOpening(dx: number, dz: number, rot: number): [number, num
 }
 
 export function openings(model: string, rot: number): Array<[number, number]> {
-  const base = BASE_OPENINGS[model]
+  const key = model.startsWith('snow-') ? model.slice(5) : model
+  const base = BASE_OPENINGS[key]
   if (!base) throw new Error(`No openings defined for ${model}`)
   return base.map(([dx, dz]) => rotateOpening(dx, dz, rot))
 }

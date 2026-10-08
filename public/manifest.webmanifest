@@ -1,0 +1,25 @@
+{
+  "name": "Tiny Tower Defense",
+  "short_name": "Tiny TD",
+  "description": "Stack towers, match UFO weaknesses, and keep the pets safe.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#8ec8ee",
+  "theme_color": "#8fd0ee",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

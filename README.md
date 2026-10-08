@@ -29,6 +29,8 @@ GitHub Pages publishes from `.github/workflows/pages.yml` with base path `/tiny-
 
 ## How to play
 
+The title screen opens on a slow orbit of the meadow. Pick one of three levels. Meadow is the first pen, Switchback is a tighter grass route, and Snow is a frozen curve. The next level unlocks after you beat the one before it. Stars are saved on this device.
+
 The meadow is under attack. UFOs follow the stone path from the north gate to the pet pen. A UFO that arrives beams a pet and carries it back toward the gate. Shoot that UFO down and the pet parachutes home. A pet is only lost if the UFO escapes. The run ends when every pet is gone, or when all 9 waves are cleared with at least one pet left.
 
 Match the weapon to the UFO. The next-wave card lists who is coming and what they are weak to. A good hit pops **Effective!**
@@ -48,13 +50,13 @@ Match the weapon to the UFO. The next-wave card lists who is coming and what the
 - **Drag** to pan. **Pinch** or the **mouse wheel** to zoom.
 - **Call wave** sends the next group. Between waves a small timer counts down and then calls it for you; **Call +gold** pays a bonus for starting early. **2×** speeds the action up. **Nums** toggles damage numbers.
 - **Sell** returns half of what that tower cost.
-- The **speaker** mutes music and effects. The first tap starts the music.
+- The **speaker** mutes sound and music. The **gear** opens settings: sound, music, haptics, damage numbers, and quality. The first tap starts the music. On level 1, a few short hints point at a build pad, the weapon, the weak-to tags, a pet rescue, and the early-wave bonus. Tap Next to skip one.
 - Clear the meadow for a star rating: 3 if all five pets are home, 2 for three or four, 1 for one or two.
 
 You begin with 120 gold. A base is 40 and a turret is 36, so the first tower can shoot before wave 1.
 
 ## This prototype
 
-In: one handcrafted grass map, modular round towers with rising stack costs and 3 upgrade tiers, five UFO roles (scout, swarm, tank, shield, boss), pet rescue, 9 waves, star rating, currency, speed control, win/lose retry, hit flashes, and a music loop.
+In: a title screen and three levels (grass meadow, grass switchback, snow), modular round towers with rising stack costs and 3 upgrade tiers, five UFO roles (scout, swarm, tank, shield, boss), pet rescue, 9 waves, star rating, currency, speed control, win/lose retry and next, a settings sheet, and a music loop. It can be added to a phone home screen.
 
-Not in this build: square tower pieces, campaign levels, snow and other biomes, endless or daily maps, pet collection, and the native iOS/Android wrapper. The web build is a static Vite app, so a later Capacitor wrap can load the same `dist/`.
+Not in this build: square tower pieces, endless or daily maps, pet collection, and the native iOS/Android wrapper. The web build is a static Vite app, so a later Capacitor wrap can load the same `dist/`.

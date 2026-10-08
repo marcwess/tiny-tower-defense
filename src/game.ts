@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { arrowTexture, heartTexture, loadAssets, renderPieceThumbnails, spawnModel } from './assets'
+import { arrowTexture, heartTexture, loadAssets, renderAppIcon, renderPieceThumbnails, spawnModel } from './assets'
 import { audio } from './audio'
 import {
   BASE_COST,
@@ -15,7 +15,6 @@ import {
   SELL_RATIO,
   START_GOLD,
   UPGRADE_COST,
-  WAVES,
   WEAPONS,
   clearBonus,
   earlyBonus,
@@ -32,8 +31,10 @@ import {
 } from './config'
 import { Enemy } from './enemies'
 import { Fx } from './fx'
-import { buildMap, cellKey, tickDiorama, type BuiltMap, type MapCell } from './map'
-import { PET_SPOTS, Pet } from './pets'
+import { LEVELS, levelById, type LevelDef } from './levels'
+import { buildMap, cellKey, disposeMap, tickDiorama, type BuiltMap, type MapCell } from './map'
+import { Pet } from './pets'
+import { buzz, levelUnlocked, loadSettings, markTutorial, saveSettings, saveStars, starsFor, tutorialSeen, type Settings } from './progress'
 import { Tower } from './towers'
 import { Hud, type ActionButton, type SelectionView } from './ui'
 
@@ -80,9 +81,20 @@ interface WaveRow {
   rescues: number
   abductions: number
   came: string
+  gate: number
 }
 
-type Phase = 'ready' | 'wave' | 'breather' | 'victory' | 'defeat'
+type Phase = 'title' | 'ready' | 'wave' | 'breather' | 'victory' | 'defeat'
+type Tier = 'low' | 'mid' | 'high'
+
+const COACH = [
+  '',
+  'Tap a pad to build',
+  'Stack a weapon on top',
+  'Weak-to tags matter',
+  'Shoot down a UFO carrying a pet to rescue it',
+  'Call wave early for bonus gold',
+]
 
 const _v = new THREE.Vector3()
 const _aim = new THREE.Vector3()
@@ -129,13 +141,12 @@ const WEAPON_EFFECT: Record<WeaponId, string> = {
   turret: 'Rapid',
 }
 
-function detectQuality(coarse: boolean): { shadows: boolean; shadowMapSize: number; pixelRatio: number } {
+function detectTier(): Tier {
   const nav = navigator as Navigator & { deviceMemory?: number }
   const memory = nav.deviceMemory ?? 8
-  const ratio = window.devicePixelRatio || 1
-  if (memory <= 2) return { shadows: false, shadowMapSize: 0, pixelRatio: 1 }
-  if (memory <= 4) return { shadows: true, shadowMapSize: 512, pixelRatio: Math.min(ratio, coarse ? 1.25 : 1.5) }
-  return { shadows: true, shadowMapSize: 1024, pixelRatio: Math.min(ratio, coarse ? 1.5 : 1.75) }
+  if (memory <= 2) return 'low'
+  if (memory <= 4) return 'mid'
+  return 'high'
 }
 
 function skyTexture(): THREE.CanvasTexture {
@@ -149,6 +160,27 @@ function skyTexture(): THREE.CanvasTexture {
     g.addColorStop(0.42, '#b7e3f8')
     g.addColorStop(0.72, '#f6e2c4')
     g.addColorStop(1, '#f3c99a')
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, 4, 256)
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.magFilter = THREE.LinearFilter
+  tex.minFilter = THREE.LinearFilter
+  return tex
+}
+
+function snowSkyTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas')
+  canvas.width = 4
+  canvas.height = 256
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    const g = ctx.createLinearGradient(0, 0, 0, 256)
+    g.addColorStop(0, '#6e9fd0')
+    g.addColorStop(0.42, '#c5dff2')
+    g.addColorStop(0.75, '#e7f3fb')
+    g.addColorStop(1, '#d5e6f4')
     ctx.fillStyle = g
     ctx.fillRect(0, 0, 4, 256)
   }
@@ -197,11 +229,14 @@ export class Game {
   private bannerChips: WaveChip[] | null = null
   private bannerT = 0
   private effectiveAt = new Map<number, number>()
+  private lastEffective = -10
+  private lastEffX = 0
+  private lastEffZ = 0
   private highlight: THREE.Mesh
   private rangeMesh: THREE.Mesh
   private hintMarker: THREE.Sprite
   private selected: MapCell | null = null
-  private phase: Phase = 'ready'
+  private phase: Phase = 'title'
   private gold = START_GOLD
   private waveIndex = 0
   private countdown = 0
@@ -218,7 +253,6 @@ export class Game {
   private fps = 60
   private fpsFrames = 0
   private fpsAccum = 0
-  private hint: boolean
   private target = new THREE.Vector3(2.6, 0.2, 4.7)
   private distance = 20.2
   private visualTime = 0
@@ -234,14 +268,43 @@ export class Game {
   private lastGround = new THREE.Vector3()
   private error: string | null = null
   private loopStarted = false
+  private level: LevelDef = levelById(1)
+  private selectedLevel = 1
+  private tutorStep = 0
+  private settings: Settings = loadSettings()
+  private settingsOpen = false
+  private tier: Tier = 'high'
+  private slowAccum = 0
+  private allowDowngrade = true
+  private sun!: THREE.DirectionalLight
+  private hemi!: THREE.HemisphereLight
+  private ambient!: THREE.AmbientLight
+  private rim!: THREE.DirectionalLight
+  private fill!: THREE.DirectionalLight
+  private skyGrass: THREE.Texture
+  private skySnow: THREE.Texture
+  private snowPoints: THREE.Points | null = null
+  private snowFall: number[] = []
+  private titleSpin = 0
+  private waveGate = Infinity
+  private runGate = Infinity
+  private iconUrl = ''
+  private padPulse: THREE.Mesh
+  private ammoPools = new Map<string, THREE.Object3D[]>()
+  private freeProjectiles: Projectile[] = []
 
   constructor(
     private app: HTMLElement,
     private hud: Hud,
   ) {
-    const coarse = window.matchMedia('(pointer: coarse)').matches
-    const capture = new URLSearchParams(location.search).has('capture')
-    const quality = detectQuality(coarse)
+    const params = new URLSearchParams(location.search)
+    const capture = params.has('capture')
+    const detected = detectTier()
+    this.tier = this.settings.quality === 'low' ? 'low' : this.settings.quality === 'high' ? 'high' : detected
+    this.allowDowngrade = !capture && !params.has('measure')
+    this.showDamage = this.settings.damage
+    this.skyGrass = skyTexture()
+    this.skySnow = snowSkyTexture()
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,
       alpha: false,
@@ -251,44 +314,37 @@ export class Game {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.02
-    this.renderer.setPixelRatio(quality.pixelRatio)
-    if (quality.shadows) {
-      this.renderer.shadowMap.enabled = true
-      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
-    }
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.camera = new THREE.PerspectiveCamera(52, 1, 0.12, 90)
     this.app.prepend(this.renderer.domElement)
-    this.hint = localStorage.getItem('tiny-td-hint-v1') !== '1'
-    this.showDamage = localStorage.getItem('tiny-td-dmg') !== '0'
 
-    this.scene.background = skyTexture()
+    this.scene.background = this.skyGrass
     this.scene.fog = new THREE.Fog(0xf6e2c8, 42, 82)
-    this.scene.add(new THREE.AmbientLight(0xfff1df, 0.3))
-    this.scene.add(new THREE.HemisphereLight(0xfff4e4, 0x5c8644, 0.4))
-    const sun = new THREE.DirectionalLight(0xffd89a, 2.45)
-    sun.position.set(11, 8.2, 6.5)
-    sun.target.position.set(3, 0, 5)
-    if (quality.shadows) {
-      sun.castShadow = true
-      sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize)
-      sun.shadow.camera.near = 0.5
-      sun.shadow.camera.far = 42
-      sun.shadow.camera.left = -11
-      sun.shadow.camera.right = 11
-      sun.shadow.camera.top = 13
-      sun.shadow.camera.bottom = -13
-      sun.shadow.bias = -0.001
-      sun.shadow.normalBias = 0.03
-      sun.shadow.radius = 1.6
-    }
-    this.scene.add(sun)
-    this.scene.add(sun.target)
-    const rim = new THREE.DirectionalLight(0xffb15a, 0.72)
-    rim.position.set(-8, 4.5, 10)
-    this.scene.add(rim)
-    const fill = new THREE.DirectionalLight(0xc5e4ff, 0.08)
-    fill.position.set(-6, 5, -4)
-    this.scene.add(fill)
+    this.ambient = new THREE.AmbientLight(0xfff1df, 0.3)
+    this.scene.add(this.ambient)
+    this.hemi = new THREE.HemisphereLight(0xfff4e4, 0x5c8644, 0.4)
+    this.scene.add(this.hemi)
+    this.sun = new THREE.DirectionalLight(0xffd89a, 2.45)
+    this.sun.position.set(11, 8.2, 6.5)
+    this.sun.target.position.set(3, 0, 5)
+    this.sun.shadow.camera.near = 0.5
+    this.sun.shadow.camera.far = 42
+    this.sun.shadow.camera.left = -11
+    this.sun.shadow.camera.right = 11
+    this.sun.shadow.camera.top = 13
+    this.sun.shadow.camera.bottom = -13
+    this.sun.shadow.bias = -0.001
+    this.sun.shadow.normalBias = 0.03
+    this.sun.shadow.radius = 1.6
+    this.scene.add(this.sun)
+    this.scene.add(this.sun.target)
+    this.applyTier(this.tier)
+    this.rim = new THREE.DirectionalLight(0xffb15a, 0.72)
+    this.rim.position.set(-8, 4.5, 10)
+    this.scene.add(this.rim)
+    this.fill = new THREE.DirectionalLight(0xc5e4ff, 0.08)
+    this.fill.position.set(-6, 5, -4)
+    this.scene.add(this.fill)
 
     this.highlight = new THREE.Mesh(
       new THREE.RingGeometry(0.38, 0.5, 32),
@@ -324,6 +380,20 @@ export class Game {
     this.hintMarker.scale.set(0.46, 0.46, 1)
     this.hintMarker.visible = false
     this.scene.add(this.hintMarker)
+
+    this.padPulse = new THREE.Mesh(
+      new THREE.RingGeometry(0.46, 0.62, 28),
+      new THREE.MeshBasicMaterial({
+        color: 0xffb15a,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    )
+    this.padPulse.rotation.x = -Math.PI / 2
+    this.padPulse.visible = false
+    this.scene.add(this.padPulse)
   }
 
   async init(): Promise<void> {
@@ -334,27 +404,145 @@ export class Game {
       this.hud.setLoading(`Raising the meadow… ${Math.round(ratio * 100)}%`)
     })
     renderPieceThumbnails()
+    this.iconUrl = renderAppIcon()
     const arrow = await arrowTexture()
     ;(this.hintMarker.material as THREE.SpriteMaterial).map = arrow
-    this.map = buildMap()
-    this.scene.add(this.map.group)
+    const capture = new URLSearchParams(location.search).has('capture')
     this.fx = new Fx(this.scene)
-    this.spawnPets()
+    this.installLevel(levelById(1), capture ? 'play' : 'title')
     this.bindInput()
     this.hud.setLoading(null)
-    this.syncMarker()
-    this.refreshHud()
     this.expose()
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this.renderer.setAnimationLoop(null)
+        return
+      }
+      this.clock.getDelta()
+      this.renderer.setAnimationLoop(() => this.frame())
+    })
     if (!this.loopStarted) {
       this.loopStarted = true
       this.renderer.setAnimationLoop(() => this.frame())
     }
   }
 
+  private applyTier(tier: Tier): void {
+    this.tier = tier
+    const coarse = window.matchMedia('(pointer: coarse)').matches
+    const ratio = window.devicePixelRatio || 1
+    const pixel =
+      tier === 'low' ? 1 : tier === 'mid' ? Math.min(ratio, coarse ? 1.25 : 1.5) : Math.min(ratio, coarse ? 1.5 : 1.75)
+    const shadows = tier !== 'low'
+    const size = tier === 'high' ? 1024 : 512
+    this.renderer.setPixelRatio(pixel)
+    this.renderer.shadowMap.enabled = shadows
+    this.sun.castShadow = shadows
+    if (shadows) {
+      this.sun.shadow.mapSize.set(size, size)
+      this.sun.shadow.map?.dispose()
+      this.sun.shadow.map = null
+    }
+    this.ensureSnow()
+    if (this.renderer.domElement.isConnected) this.resize()
+  }
+
+  private applyBiome(biome: 'grass' | 'snow'): void {
+    const fog = this.scene.fog as THREE.Fog
+    if (biome === 'snow') {
+      fog.color.set(0xd4e6f8)
+      fog.near = 46
+      fog.far = 88
+      this.ambient.color.set(0xeaf3ff)
+      this.ambient.intensity = 0.38
+      this.hemi.color.set(0xd6eaff)
+      this.hemi.groundColor.set(0x6d8eae)
+      this.hemi.intensity = 0.48
+      this.sun.color.set(0xf7fbff)
+      this.sun.intensity = 5.4
+      this.rim.color.set(0xb7d2ff)
+      this.rim.intensity = 0.28
+      this.fill.color.set(0x8ebfff)
+      this.fill.intensity = 0.34
+      this.renderer.toneMappingExposure = 1.55
+      this.scene.background = this.skySnow
+    } else {
+      fog.color.set(0xf6e2c8)
+      fog.near = 42
+      fog.far = 82
+      this.ambient.color.set(0xfff1df)
+      this.ambient.intensity = 0.3
+      this.hemi.color.set(0xfff4e4)
+      this.hemi.groundColor.set(0x5c8644)
+      this.hemi.intensity = 0.4
+      this.sun.color.set(0xffd89a)
+      this.sun.intensity = 2.45
+      this.rim.color.set(0xffb15a)
+      this.rim.intensity = 0.72
+      this.fill.color.set(0xc5e4ff)
+      this.fill.intensity = 0.08
+      this.renderer.toneMappingExposure = 1.02
+      this.scene.background = this.skyGrass
+    }
+    this.ensureSnow()
+  }
+
+  /** Falling snow is pooled and only drawn on the high tier. */
+  private ensureSnow(): void {
+    const on = this.tier === 'high' && this.level.biome === 'snow'
+    if (!this.snowPoints) {
+      const count = 180
+      const arr = new Float32Array(count * 3)
+      this.snowFall = []
+      for (let i = 0; i < count; i++) {
+        arr[i * 3] = 1.1 + Math.random() * 3.8
+        arr[i * 3 + 1] = 2.4 + Math.random() * 3.4
+        arr[i * 3 + 2] = 2.2 + Math.random() * 6.2
+        this.snowFall.push(0.0035 + Math.random() * 0.007)
+      }
+      const geo = new THREE.BufferGeometry()
+      geo.setAttribute('position', new THREE.BufferAttribute(arr, 3))
+      this.snowPoints = new THREE.Points(
+        geo,
+        new THREE.PointsMaterial({
+          color: 0xf7fbff,
+          size: 0.13,
+          transparent: true,
+          opacity: 0.9,
+          depthWrite: false,
+          sizeAttenuation: true,
+        }),
+      )
+      this.snowPoints.frustumCulled = false
+      this.scene.add(this.snowPoints)
+    }
+    this.snowPoints.visible = on
+  }
+
+  private tickSnow(): void {
+    const points = this.snowPoints
+    if (!points?.visible) return
+    const attr = points.geometry.getAttribute('position') as THREE.BufferAttribute
+    const arr = attr.array as Float32Array
+    for (let i = 0; i < this.snowFall.length; i++) {
+      arr[i * 3 + 1] -= this.snowFall[i]
+      arr[i * 3] += Math.sin(this.visualTime * 0.7 + i) * 0.0015
+      if (arr[i * 3] < 0.9 || arr[i * 3] > 5.1) arr[i * 3] = 1.1 + Math.random() * 3.8
+      if (arr[i * 3 + 2] < 1.8 || arr[i * 3 + 2] > 8.8) arr[i * 3 + 2] = 2.2 + Math.random() * 6.2
+      if (arr[i * 3 + 1] < 2.05) {
+        arr[i * 3 + 1] = 5.6
+        arr[i * 3] = 1.1 + Math.random() * 3.8
+        arr[i * 3 + 2] = 2.2 + Math.random() * 6.2
+      }
+    }
+    attr.needsUpdate = true
+  }
+
   private resize(): void {
     const width = this.app.clientWidth || window.innerWidth
     const height = this.app.clientHeight || window.innerHeight
-    this.camera.aspect = width / Math.max(1, height)
+    if (width < 2 || height < 2) return
+    this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
     this.renderer.setSize(width, height, false)
     this.renderer.domElement.style.width = `${width}px`
@@ -363,8 +551,8 @@ export class Game {
   }
 
   /**
-   * Portrait turns the board so the UFO route runs down the screen and the pet
-   * pen stays above the bottom bar. Wider screens keep the closer three-quarter view.
+   * Same 3/4 yaw as the main-branch portrait. Distance is solved so the path,
+   * spawn, and pen fill the width. Decorative border tiles may crop.
    */
   private framing(): {
     fov: number
@@ -376,14 +564,190 @@ export class Game {
     ty: number
     tz: number
   } {
-    const aspect = this.camera.aspect
-    if (aspect < 0.62) {
-      return { fov: 42, pitch: 0.76, distance: 20.2, azimuth: 2.8, lookY: 0.25, tx: 2.6, ty: 0.2, tz: 4.7 }
+    const aspect = this.camera.aspect || 1
+    const pose =
+      aspect < 0.62
+        ? { fov: 42, pitch: 0.76, azimuth: 2.8, lookY: 0.25 }
+        : aspect < 1.05
+          ? { fov: 38, pitch: 0.74, azimuth: 2.5, lookY: 0.18 }
+          : { fov: 30, pitch: 0.72, azimuth: 2.25, lookY: 0.12 }
+    if (!this.map) {
+      const distance = aspect < 0.62 ? 20.2 : aspect < 1.05 ? 18.4 : 12.2
+      const tx = aspect < 0.62 ? 2.6 : aspect < 1.05 ? 3 : 3.15
+      const tz = aspect < 0.62 ? 4.7 : aspect < 1.05 ? 4.8 : 4.9
+      return { ...pose, distance, tx, ty: pose.lookY, tz }
     }
-    if (aspect < 1.05) {
-      return { fov: 38, pitch: 0.74, distance: 18.4, azimuth: 2.5, lookY: 0.18, tx: 3.0, ty: 0.12, tz: 4.8 }
+    const solved = this.solveFrame(pose)
+    return { ...pose, distance: solved.distance, tx: solved.tx, ty: pose.lookY, tz: solved.tz }
+  }
+
+  private viewInsets(): { w: number; h: number; l: number; t: number; r: number; b: number } {
+    const w = this.app.clientWidth || window.innerWidth
+    const h = this.app.clientHeight || window.innerHeight
+    const topEl = document.querySelector('#top')
+    const bar = document.querySelector('#actions')
+    const topBox = topEl?.getBoundingClientRect()
+    const barBox = bar?.getBoundingClientRect()
+    const top = Math.max(48, Math.round((topBox?.bottom ?? 58) + 4))
+    const bottom = barBox && barBox.top > top + 80 ? Math.round(barBox.top - 6) : h - 64
+    const side = Math.max(4, Math.round(w * 0.012))
+    return { w, h, l: side, t: top, r: w - side, b: Math.min(h - 8, bottom) }
+  }
+
+  /** Corners of the path, the spawn lead-in, and the pet pen. Not the plinth. */
+  private framePoints(): THREE.Vector3[] {
+    let minX = Infinity
+    let maxX = -Infinity
+    let minZ = Infinity
+    let maxZ = -Infinity
+    const grow = (x: number, z: number, pad: number) => {
+      minX = Math.min(minX, x - pad)
+      maxX = Math.max(maxX, x + pad)
+      minZ = Math.min(minZ, z - pad)
+      maxZ = Math.max(maxZ, z + pad)
     }
-    return { fov: 30, pitch: 0.72, distance: 12.2, azimuth: 2.25, lookY: 0.12, tx: 3.15, ty: 0.08, tz: 4.9 }
+    for (const point of this.map.points) grow(point.x, point.z, 0.4)
+    for (const pet of this.level.pets) grow(pet.x, pet.z, 0.26)
+    const pts: THREE.Vector3[] = []
+    for (const x of [minX, maxX]) {
+      for (const z of [minZ, maxZ]) {
+        for (const y of [0.12, 0.85]) pts.push(new THREE.Vector3(x, y, z))
+      }
+    }
+    return pts
+  }
+
+  private overflowAt(
+    distance: number,
+    tx: number,
+    tz: number,
+    pose: { fov: number; pitch: number; azimuth: number; lookY: number },
+    points: THREE.Vector3[],
+    safe: { w: number; h: number; l: number; t: number; r: number; b: number },
+  ): number {
+    const cam = this.camera
+    cam.fov = pose.fov
+    cam.aspect = safe.w / Math.max(1, safe.h)
+    cam.updateProjectionMatrix()
+    const horiz = Math.cos(pose.pitch) * distance
+    cam.position.set(tx + Math.sin(pose.azimuth) * horiz, Math.sin(pose.pitch) * distance, tz + Math.cos(pose.azimuth) * horiz)
+    cam.lookAt(tx, pose.lookY, tz)
+    cam.updateMatrixWorld()
+    let overflow = 0
+    for (const point of points) {
+      _v.copy(point).project(cam)
+      if (_v.z > 1) {
+        overflow += 400
+        continue
+      }
+      const x = (_v.x * 0.5 + 0.5) * safe.w
+      const y = (-_v.y * 0.5 + 0.5) * safe.h
+      overflow += Math.max(0, safe.l - x) + Math.max(0, x - safe.r) + Math.max(0, safe.t - y) + Math.max(0, y - safe.b)
+    }
+    return overflow
+  }
+
+  private solveFrame(pose: { fov: number; pitch: number; azimuth: number; lookY: number }): {
+    distance: number
+    tx: number
+    tz: number
+  } {
+    const points = this.framePoints()
+    const safe = this.viewInsets()
+    let cx = 0
+    let cz = 0
+    for (const point of this.map.points) {
+      cx += point.x
+      cz += point.z
+    }
+    cx /= Math.max(1, this.map.points.length)
+    cz /= Math.max(1, this.map.points.length)
+    const portrait = safe.w / Math.max(1, safe.h) < 0.85
+    let bestDist = 18
+    let bestX = cx
+    let bestZ = cz
+    let bestScore = Infinity
+    for (let ox = -1.6; ox <= 1.6; ox += 0.8) {
+      for (let oz = -1.6; oz <= 1.6; oz += 0.8) {
+        const tx = THREE.MathUtils.clamp(cx + ox, 0.45, 5.55)
+        const tz = THREE.MathUtils.clamp(cz + oz, 0.45, 9.2)
+        let lo = 7
+        let hi = 40
+        for (let i = 0; i < 11; i++) {
+          const mid = (lo + hi) / 2
+          const over = this.overflowAt(mid, tx, tz, pose, points, safe)
+          if (over <= 0.6) hi = mid
+          else lo = mid
+        }
+        const span = this.spanAt(hi, tx, tz, pose, points, safe)
+        const widthShort = portrait ? Math.max(0, 0.9 - span.width) : 0
+        const heightShort = portrait ? 0 : Math.max(0, 0.78 - span.height)
+        const score = widthShort * 200 + heightShort * 80 + span.center * (portrait ? 4 : 14) + span.overflow * 30
+        if (score < bestScore) {
+          bestScore = score
+          bestDist = hi
+          bestX = tx
+          bestZ = tz
+        }
+      }
+    }
+    return { distance: bestDist, tx: bestX, tz: bestZ }
+  }
+
+  private spanAt(
+    distance: number,
+    tx: number,
+    tz: number,
+    pose: { fov: number; pitch: number; azimuth: number; lookY: number },
+    points: THREE.Vector3[],
+    safe: { w: number; h: number; l: number; t: number; r: number; b: number },
+  ): { width: number; height: number; center: number; overflow: number } {
+    const overflow = this.overflowAt(distance, tx, tz, pose, points, safe)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const point of points) {
+      _v.copy(point).project(this.camera)
+      const x = (_v.x * 0.5 + 0.5) * safe.w
+      const y = (-_v.y * 0.5 + 0.5) * safe.h
+      minX = Math.min(minX, x)
+      maxX = Math.max(maxX, x)
+      minY = Math.min(minY, y)
+      maxY = Math.max(maxY, y)
+    }
+    const safeMidY = (safe.t + safe.b) / 2
+    const center =
+      Math.abs((minX + maxX) / 2 - safe.w / 2) / safe.w + Math.abs((minY + maxY) / 2 - safeMidY) / safe.h
+    return {
+      width: (maxX - minX) / Math.max(1, safe.w),
+      height: (maxY - minY) / Math.max(1, safe.h),
+      center,
+      overflow,
+    }
+  }
+
+  private boardSpan(): { width: number; height: number } {
+    const w = this.app.clientWidth || window.innerWidth || 1
+    const h = this.app.clientHeight || window.innerHeight || 1
+    this.camera.updateMatrixWorld()
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const point of this.framePoints()) {
+      _v.copy(point).project(this.camera)
+      const x = (_v.x * 0.5 + 0.5) * w
+      const y = (-_v.y * 0.5 + 0.5) * h
+      minX = Math.min(minX, x)
+      maxX = Math.max(maxX, x)
+      minY = Math.min(minY, y)
+      maxY = Math.max(maxY, y)
+    }
+    return {
+      width: Math.round(((maxX - minX) / w) * 1000) / 1000,
+      height: Math.round(((maxY - minY) / h) * 1000) / 1000,
+    }
   }
 
   private applyFraming(resetView: boolean): void {
@@ -403,7 +767,7 @@ export class Game {
   private clampCamera(): void {
     this.target.x = THREE.MathUtils.clamp(this.target.x, 0.2, 5.8)
     this.target.z = THREE.MathUtils.clamp(this.target.z, 0.2, 9.8)
-    this.distance = THREE.MathUtils.clamp(this.distance, 4.2, 34)
+    this.distance = THREE.MathUtils.clamp(this.distance, 4.2, 46)
   }
 
   private updateCamera(): void {
@@ -414,10 +778,12 @@ export class Game {
     }
     const horiz = Math.cos(this.pitch) * this.distance
     const bob = Math.sin(performance.now() * 0.04) * this.shake
+    const orbit = this.phase === 'title' && !this.userCam ? this.titleSpin : 0
+    const azimuth = this.azimuth + orbit
     this.camera.position.set(
-      this.target.x + Math.sin(this.azimuth) * horiz + bob,
+      this.target.x + Math.sin(azimuth) * horiz + bob,
       Math.sin(this.pitch) * this.distance + Math.cos(performance.now() * 0.05) * this.shake,
-      this.target.z + Math.cos(this.azimuth) * horiz,
+      this.target.z + Math.cos(azimuth) * horiz,
     )
     this.camera.lookAt(this.target.x, this.lookY, this.target.z)
   }
@@ -425,6 +791,7 @@ export class Game {
   private bindInput(): void {
     const canvas = this.renderer.domElement
     canvas.addEventListener('contextmenu', (event) => event.preventDefault())
+    canvas.addEventListener('gesturestart', (event) => event.preventDefault())
     canvas.addEventListener('pointerdown', (event) => {
       audio.unlock()
       this.pointers.set(event.pointerId, {
@@ -514,7 +881,7 @@ export class Game {
   }
 
   private selectAt(clientX: number, clientY: number): void {
-    if (this.phase === 'victory' || this.phase === 'defeat') return
+    if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') return
     this.setNdc(clientX, clientY)
     this.raycaster.setFromCamera(this.ndc, this.camera)
     const hits = this.raycaster.intersectObjects(this.map.picks, false)
@@ -526,7 +893,7 @@ export class Game {
   }
 
   private spawnPets(): void {
-    for (const spot of PET_SPOTS) {
+    for (const spot of this.level.pets) {
       const pet = new Pet(spot)
       this.pets.push(pet)
       this.scene.add(pet.group)
@@ -535,6 +902,18 @@ export class Game {
 
   private frame(): void {
     const raw = Math.min(this.clock.getDelta(), 0.1)
+    if (this.allowDowngrade && this.settings.quality === 'auto' && this.tier !== 'low') {
+      if (raw > 0.022) {
+        this.slowAccum += raw
+        if (this.slowAccum >= 3) {
+          this.slowAccum = 0
+          const next: Tier = this.tier === 'high' ? 'mid' : 'low'
+          this.applyTier(next)
+        }
+      } else {
+        this.slowAccum = Math.max(0, this.slowAccum - raw * 0.5)
+      }
+    }
     this.fpsAccum += raw
     this.fpsFrames += 1
     if (this.fpsAccum >= 0.4) {
@@ -551,7 +930,9 @@ export class Game {
       guard += 1
     }
     this.visualTime += raw
+    if (this.phase === 'title') this.titleSpin += raw * 0.18
     if (this.map) tickDiorama(this.map, this.visualTime)
+    this.tickSnow()
     this.updateCamera()
     for (const enemy of this.enemies) enemy.billboard(this.camera)
     this.renderer.render(this.scene, this.camera)
@@ -578,6 +959,7 @@ export class Game {
       const escaped: Enemy[] = []
       for (const enemy of this.enemies) {
         const step = enemy.update(dt, this.map.points, this.time)
+        if (enemy.carrying) this.trackGate(enemy)
         if (step === 'arrived') arrived.push(enemy)
         if (step === 'escaped') escaped.push(enemy)
       }
@@ -591,7 +973,7 @@ export class Game {
     } else {
       this.updateCarries(dt)
     }
-    const threat = this.enemies.some((enemy) => enemy.alive && enemy.pos.z < 2.6)
+    const threat = this.phase === 'title' || this.enemies.some((enemy) => enemy.alive && enemy.pos.z < 2.6)
     for (const pet of this.pets) {
       if (pet.alive || pet.reserved) pet.update(dt)
       if (pet.alive && !pet.reserved) pet.setNervous(threat)
@@ -599,7 +981,12 @@ export class Game {
     for (const tower of this.towers) tower.update(dt)
     this.fx.update(dt)
     if (this.hintMarker.visible) {
-      this.hintMarker.position.y = 1.15 + Math.sin(this.time * 4) * 0.1
+      this.hintMarker.position.y = 1.05 + Math.sin(this.time * 4) * 0.1
+    }
+    if (this.padPulse.visible) {
+      const pulse = 1 + Math.sin(this.time * 5) * 0.14
+      this.padPulse.scale.setScalar(pulse)
+      ;(this.padPulse.material as THREE.MeshBasicMaterial).opacity = 0.55 + Math.sin(this.time * 5) * 0.35
     }
     this.refreshHud()
   }
@@ -649,7 +1036,7 @@ export class Game {
       this.scene.remove(carry.pet.group)
       this.leaks += 1
       this.dropCarry(carry)
-      this.fx.popup(enemy.pos.x, enemy.pos.y + 0.4, enemy.pos.z, 'Lost!', '#ffb0a8', 1.1)
+      this.popText(enemy.pos.x, enemy.pos.y + 0.4, enemy.pos.z, 'Lost!', '#ffb0a8', 1.1)
     }
     this.removeEnemy(enemy)
     if (this.livingPets() <= 0) this.lose()
@@ -771,7 +1158,9 @@ export class Game {
     this.rescues += 1
     pet.parachute(enemy.pos.x, Math.max(0.8, enemy.pos.y - 0.4), enemy.pos.z)
     audio.play('cheer')
-    this.fx.popup(enemy.pos.x, enemy.pos.y + 0.55, enemy.pos.z, 'Saved!', '#b8ffb0', 1.15)
+    buzz('rescue')
+    this.advanceTutor('rescue')
+    this.popText(enemy.pos.x, enemy.pos.y + 0.55, enemy.pos.z, 'Saved!', '#b8ffb0', 1.15)
     this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xd8ffe4, 10, 2.2)
     this.shake = Math.max(this.shake, 0.08)
   }
@@ -819,13 +1208,12 @@ export class Game {
       target.pos.y + 0.05,
       target.pos.z + target.vel.z * flight * 0.8,
     )
-    const mesh = spawnModel(stats.ammo)
-    const ammoScale = stats.ammo.includes('arrow') ? 0.65 : stats.ammo.includes('bullet') ? 1.15 : 1.45
-    mesh.scale.setScalar(ammoScale)
-    const pos = _v.clone()
+    const mesh = this.takeAmmo(stats.ammo)
+    const reused = this.freeProjectiles.pop()
+    const pos = reused?.pos ?? new THREE.Vector3()
+    const vel = reused?.vel ?? new THREE.Vector3()
+    pos.copy(_v)
     mesh.position.copy(pos)
-    this.scene.add(mesh)
-    const vel = new THREE.Vector3()
     let gravity = 0
     if (stats.arc) {
       const dx = _aim.x - pos.x
@@ -836,10 +1224,34 @@ export class Game {
     } else {
       vel.copy(_aim).sub(pos).normalize().multiplyScalar(stats.speed)
     }
-    this.projectiles.push({
+    const shell: Projectile = reused ?? {
       mesh,
       pos,
       vel,
+      gravity: 0,
+      age: 0,
+      life: 0,
+      damage: 0,
+      splash: 0,
+      slow: 0,
+      shieldMul: 1,
+      pierce: 0,
+      weapon: null,
+      roof: null,
+      splashHit: false,
+      homing: true,
+      speed: 0,
+      target: null,
+      hit: new Set(),
+      alive: true,
+    }
+    shell.mesh = mesh
+    shell.pos = pos
+    shell.vel = vel
+    shell.hit.clear()
+    shell.alive = true
+    this.projectiles.push(shell)
+    Object.assign(shell, {
       gravity,
       age: 0,
       life: flight + (stats.arc ? 0.05 : 0.45),
@@ -908,10 +1320,11 @@ export class Game {
       }
     }
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
-      if (!this.projectiles[i].alive) {
-        this.scene.remove(this.projectiles[i].mesh)
-        this.projectiles.splice(i, 1)
-      }
+      const proj = this.projectiles[i]
+      if (proj.alive) continue
+      this.recycleAmmo(proj.mesh)
+      this.freeProjectiles.push(proj)
+      this.projectiles.splice(i, 1)
     }
   }
 
@@ -939,7 +1352,7 @@ export class Game {
     const effective = mod.effective || (hadShield && mod.shield >= 1.8)
     if (effective) this.popEffective(enemy)
     if (this.showDamage && amount >= 1) {
-      this.fx.popup(enemy.pos.x + 0.15, enemy.pos.y + 0.45, enemy.pos.z, String(Math.round(amount)), '#fff6ea', 0.7)
+      this.popText(enemy.pos.x + 0.15, enemy.pos.y + 0.45, enemy.pos.z, String(Math.round(amount)), '#fff6ea', 0.7)
     }
     return { killed, effective }
   }
@@ -947,8 +1360,15 @@ export class Game {
   private popEffective(enemy: Enemy): void {
     const last = this.effectiveAt.get(enemy.id) ?? -10
     if (this.time - last < 0.55) return
+    const near =
+      this.time - this.lastEffective < 1.2 &&
+      Math.hypot(enemy.pos.x - this.lastEffX, enemy.pos.z - this.lastEffZ) < 1.7
+    if (near) return
+    this.lastEffective = this.time
+    this.lastEffX = enemy.pos.x
+    this.lastEffZ = enemy.pos.z
     this.effectiveAt.set(enemy.id, this.time)
-    this.fx.popup(enemy.pos.x, enemy.pos.y + 1.15, enemy.pos.z, 'Effective!', '#b6ff8a', 1.2)
+    this.popText(enemy.pos.x, enemy.pos.y + 1.15, enemy.pos.z, 'Effective!', '#b6ff8a', 1.2)
   }
 
   private splash(proj: Projectile, origin: THREE.Vector3): void {
@@ -986,8 +1406,23 @@ export class Game {
     const x = (_v.x * 0.5 + 0.5) * rect.width + rect.left
     const y = (-_v.y * 0.5 + 0.5) * rect.height + rect.top
     for (let i = 0; i < count; i++) {
-      window.setTimeout(() => this.hud.flyCoin(x + (i - 1) * 12, y - i * 6), i * 60)
+      window.setTimeout(() => this.hud.flyCoin(x + (i - 1) * 6, y), i * 28)
     }
+  }
+
+  /** Keep combat text inside the view, including its outline, at every zoom. */
+  private popText(x: number, y: number, z: number, text: string, color: string, life = 0.9): void {
+    _v.set(x, y, z).project(this.camera)
+    if (_v.z > 1) {
+      this.fx.popup(x, y, z, text, color, life)
+      return
+    }
+    const marginX = Math.min(0.46, 0.2 + text.length * 0.02)
+    const marginY = 0.16
+    _v.x = THREE.MathUtils.clamp(_v.x, -1 + marginX, 1 - marginX)
+    _v.y = THREE.MathUtils.clamp(_v.y, -1 + marginY, 1 - marginY)
+    _v.unproject(this.camera)
+    this.fx.popup(_v.x, _v.y, _v.z, text, color, life)
   }
 
   private kill(enemy: Enemy): void {
@@ -995,13 +1430,14 @@ export class Game {
     enemy.alive = false
     this.kills += 1
     this.gold += enemy.reward
-    this.fx.popup(enemy.pos.x, enemy.pos.y + 0.35, enemy.pos.z, `+${enemy.reward}`, '#ffe08a')
+    this.popText(enemy.pos.x, enemy.pos.y + 0.35, enemy.pos.z, `+${enemy.reward}`, '#ffe08a')
     this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xfff2c4, 12, 3.2)
     this.fx.debris(enemy.pos.x, enemy.pos.y + 0.2, enemy.pos.z, ENEMIES[enemy.kind].tint)
     this.fx.puff(enemy.pos.x, enemy.pos.y + 0.15, enemy.pos.z)
     this.fx.ring(enemy.pos.x, enemy.pos.z, 0xffd27a)
     this.flyCoins(enemy.pos, 3)
     audio.play('boom')
+    buzz('kill')
     this.shake = Math.max(this.shake, enemy.kind === 'boss' ? 0.2 : 0.12)
     const carry = this.carries.find((item) => item.enemy === enemy)
     if (carry) this.rescue(carry)
@@ -1027,12 +1463,13 @@ export class Game {
     this.gold += clearBonus(cleared)
     this.noteWave(cleared)
     this.waveIndex += 1
-    if (this.waveIndex >= WAVES.length) {
+    if (this.waveIndex >= this.level.waves.length) {
       this.win()
       return
     }
     this.phase = 'breather'
     this.countdown = BREATHER_SECONDS
+    this.advanceTutor('breather')
     audio.play('place')
   }
 
@@ -1040,9 +1477,21 @@ export class Game {
     return this.pets.filter((pet) => pet.alive).length
   }
 
+  private trackGate(enemy: Enemy): void {
+    const gate = this.map.points[0]
+    if (!gate) return
+    const dist = Math.hypot(enemy.pos.x - gate.x, enemy.pos.z - gate.z)
+    if (dist < this.waveGate) this.waveGate = dist
+    if (dist < this.runGate) this.runGate = dist
+  }
+
+  private gateValue(value: number): number {
+    return Number.isFinite(value) ? Math.round(value * 100) / 100 : 99
+  }
+
   private noteWave(waveNumber: number): void {
     if (this.waveLog.some((row) => row.wave === waveNumber)) return
-    const def = WAVES[waveNumber - 1]
+    const def = this.level.waves[waveNumber - 1]
     this.waveLog.push({
       wave: waveNumber,
       gold: this.gold,
@@ -1052,21 +1501,28 @@ export class Game {
       rescues: this.rescues,
       abductions: this.abductions,
       came: def ? wavePreview(def).replaceAll('\n', ' | ') : '',
+      gate: this.gateValue(this.waveGate),
     })
   }
 
   startWave(bonus: boolean): void {
     if (this.phase !== 'ready' && this.phase !== 'breather') return
-    if (bonus && this.phase === 'breather' && this.countdown > 0.75) this.gold += earlyBonus(this.waveIndex)
-    this.bannerTitle = this.waveIndex === WAVES.length - 1 ? 'Boss wave' : `Wave ${this.waveIndex + 1}`
-    this.bannerChips = waveChips(WAVES[this.waveIndex])
+    const early = bonus && this.phase === 'breather' && this.countdown > 0.75
+    if (early) {
+      this.gold += earlyBonus(this.waveIndex)
+      this.advanceTutor('early')
+    }
+    this.advanceTutor('wave')
+    this.bannerTitle = this.waveIndex === this.level.waves.length - 1 ? 'Boss wave' : `Wave ${this.waveIndex + 1}`
+    this.bannerChips = waveChips(this.level.waves[this.waveIndex])
     this.bannerT = 2
     this.phase = 'wave'
     this.waveTime = 0
+    this.waveGate = Infinity
     this.spawnIndex = 0
     this.schedule = []
     let time = 0.35
-    for (const group of WAVES[this.waveIndex].groups) {
+    for (const group of this.level.waves[this.waveIndex].groups) {
       for (let i = 0; i < group.count; i++) {
         this.schedule.push({ time, kind: group.kind, entry: group.entry ?? 0, hpMul: group.hpMul ?? 1 })
         time += group.interval
@@ -1106,7 +1562,7 @@ export class Game {
   }
 
   buy(x: number, z: number, part: string): boolean {
-    if (this.phase === 'victory' || this.phase === 'defeat') return false
+    if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') return false
     const cell = this.map.cells.get(cellKey(x, z))
     if (!cell) return false
     if (part === 'base') return this.placeBase(cell)
@@ -1126,7 +1582,8 @@ export class Game {
     this.towers.push(tower)
     this.scene.add(tower.group)
     this.selected = cell
-    this.dismissHint()
+    this.advanceTutor('base')
+    buzz('build')
     audio.play('place')
     audio.play('thud')
     this.fx.burst(cell.x, 0.3, cell.z, 0xe6d2a8, 12, 2)
@@ -1169,6 +1626,8 @@ export class Game {
       return false
     }
     tower.rebuild(true)
+    if (isWeapon(part)) this.advanceTutor('weapon')
+    buzz('build')
     audio.play(part.startsWith('middle-') || part.startsWith('roof-') ? 'thud' : 'place')
     this.fx.burst(cell.x, 0.8, cell.z, 0xffe7a8, 10, 2.2)
     this.syncSelection()
@@ -1185,6 +1644,7 @@ export class Game {
     tower.spent += cost
     tower.tier += 1
     tower.rebuild(true)
+    buzz('build')
     audio.play('thud')
     this.fx.burst(cell.x, 0.9, cell.z, 0xffd27a, 8, 2)
     this.syncSelection()
@@ -1201,7 +1661,7 @@ export class Game {
     this.scene.remove(tower.group)
     this.towers.splice(index, 1)
     audio.play('click')
-    this.fx.popup(cell.x, 0.8, cell.z, `+${refund}`, '#fff1b8')
+    this.popText(cell.x, 0.8, cell.z, `+${refund}`, '#fff1b8')
     this.syncSelection()
     this.refreshHud()
     return true
@@ -1211,17 +1671,24 @@ export class Game {
     return this.towers.find((tower) => tower.x === x && tower.z === z)
   }
 
-  private dismissHint(): void {
-    if (!this.hint && !this.hintMarker.visible) return
-    this.hint = false
-    this.hintMarker.visible = false
-    localStorage.setItem('tiny-td-hint-v1', '1')
+  private coachPad(): { x: number; z: number } {
+    let fallback = this.map.hint
+    for (const cell of this.map.cells.values()) {
+      if (cell.kind !== 'build' || !cell.model.includes('dirt')) continue
+      fallback = cell
+      if (cell.z >= 3 && cell.z <= 8) return cell
+    }
+    return fallback
   }
 
   private syncMarker(): void {
-    const show = this.hint && this.towers.length === 0
+    const show = this.tutorStep === 1 && this.towers.length === 0
     this.hintMarker.visible = show
-    if (show) this.hintMarker.position.set(this.map.hint.x, 1.15, this.map.hint.z)
+    this.padPulse.visible = show
+    if (!show) return
+    const pad = this.coachPad()
+    this.hintMarker.position.set(pad.x, 1.05, pad.z)
+    this.padPulse.position.set(pad.x, 0.28, pad.z)
   }
 
   private syncSelection(): void {
@@ -1372,10 +1839,10 @@ export class Game {
       startLabel = `${this.enemies.length} UFOs`
     } else if (this.phase === 'victory') startLabel = 'Clear'
     else if (this.phase === 'defeat') startLabel = 'Over'
-    const waveNo = Math.min(this.waveIndex + 1, WAVES.length)
-    const preview = playing && this.waveIndex < WAVES.length ? waveChips(WAVES[this.waveIndex]) : null
+    const waveNo = Math.min(this.waveIndex + 1, this.level.waves.length)
+    const preview = playing && this.waveIndex < this.level.waves.length ? waveChips(this.level.waves[this.waveIndex]) : null
     const stars = starCount(this.livingPets())
-    const waveLabel = `Wave ${waveNo}/${WAVES.length}`
+    const waveLabel = `Wave ${waveNo}/${this.level.waves.length}`
     this.hud.render({
       gold: this.gold,
       waveLabel,
@@ -1387,7 +1854,7 @@ export class Game {
       speed: this.speedChoice,
       muted: audio.muted,
       damageNumbers: this.showDamage,
-      hint: this.hint && this.towers.length === 0,
+      hint: false,
       startLabel,
       startEnabled: playing,
       countdownLabel,
@@ -1402,8 +1869,8 @@ export class Game {
               title: 'The pets are safe',
               detail:
                 stars >= 3
-                  ? `All ${WAVES.length} waves held, and every pet waddled home.`
-                  : `All ${WAVES.length} waves held. ${this.livingPets()} pets made it home.`,
+                  ? `All ${this.level.waves.length} waves held, and every pet waddled home.`
+                  : `All ${this.level.waves.length} waves held. ${this.livingPets()} pets made it home.`,
               stars,
             }
           : this.phase === 'defeat'
@@ -1414,7 +1881,111 @@ export class Game {
                 stars: 0,
               }
             : null,
+      title: this.titleView(),
+      coach: this.coachView(),
+      settingsOpen: this.settingsOpen,
+      settings: this.settings,
+      hapticsAvailable: typeof navigator.vibrate === 'function',
     })
+  }
+
+  private titleView() {
+    if (this.phase !== 'title') return null
+    return LEVELS.map((level, index) => ({
+      id: level.id,
+      name: level.name,
+      blurb: level.blurb,
+      lock: index > 0 ? `Beat ${LEVELS[index - 1].name}` : '',
+      stars: starsFor(level.id),
+      unlocked: levelUnlocked(level.id),
+      selected: level.id === this.selectedLevel,
+    }))
+  }
+
+  private coachView(): {
+    text: string
+    target: { l: number; t: number; r: number; b: number }
+    avoid: Array<{ l: number; t: number; r: number; b: number }>
+    lane: Array<{ x: number; y: number }>
+  } | null {
+    if (this.tutorStep < 1 || this.tutorStep > 5 || this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') {
+      return null
+    }
+    const target = this.coachTarget()
+    if (!target) return null
+    const lane = this.map.points
+      .map((point) => this.projectWorld(point.x, 0.8, point.z))
+      .filter((point): point is { x: number; y: number } => !!point)
+    return { text: COACH[this.tutorStep], target, avoid: this.coachAvoid(), lane }
+  }
+
+  private coachTarget(): { l: number; t: number; r: number; b: number } | null {
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const mid = { l: rect.left + rect.width * 0.5 - 18, t: rect.top + rect.height * 0.42, r: rect.left + rect.width * 0.5 + 18, b: rect.top + rect.height * 0.42 + 28 }
+    if (this.tutorStep === 1) {
+      const pad = this.coachPad()
+      return this.worldBox(pad.x, pad.z, 0.2, 26) ?? mid
+    }
+    if (this.tutorStep === 2) {
+      return this.clientBox(this.weaponButton()) ?? mid
+    }
+    if (this.tutorStep === 3) return this.clientBox(document.querySelector('#preview')) ?? mid
+    if (this.tutorStep === 4) {
+      const index = Math.max(2, Math.floor(this.map.points.length * 0.42))
+      const spot = this.map.points[Math.min(index, this.map.points.length - 2)]
+      return this.worldBox(spot.x, spot.z, 1.1, 22) ?? mid
+    }
+    return this.clientBox(document.querySelector('#start')) ?? mid
+  }
+
+  private weaponButton(): Element | null {
+    for (const id of ['turret', 'ballista', 'cannon', 'catapult']) {
+      const node = document.querySelector(`[data-part="${id}"]`)
+      if (node) return node
+    }
+    return null
+  }
+
+  private coachAvoid(): Array<{ l: number; t: number; r: number; b: number }> {
+    const boxes: Array<{ l: number; t: number; r: number; b: number } | null> = []
+    boxes.push(this.clientBox(document.querySelector('#top')))
+    if (this.tutorStep === 2) {
+      boxes.push(this.clientBox(document.querySelector('#card')))
+      boxes.push(this.clientBox(document.querySelector('#actions')))
+    }
+    if (this.tutorStep === 4) {
+      const spawn = this.map.points[1] ?? this.map.points[0]
+      boxes.push(this.worldBox(spawn.x, spawn.z, 1.2, 56))
+      boxes.push(this.clientBox(document.querySelector('#preview')))
+    }
+    if (this.tutorStep === 3 || this.tutorStep === 5) {
+      boxes.push(this.clientBox(document.querySelector('#preview')))
+    }
+    return boxes.filter((box): box is { l: number; t: number; r: number; b: number } => !!box)
+  }
+
+  private clientBox(node: Element | null): { l: number; t: number; r: number; b: number } | null {
+    if (!(node instanceof HTMLElement) || node.hidden) return null
+    const box = node.getBoundingClientRect()
+    if (box.width < 2 || box.height < 2) return null
+    return { l: box.left, t: box.top, r: box.right, b: box.bottom }
+  }
+
+  private worldBox(x: number, z: number, y: number, pad: number): { l: number; t: number; r: number; b: number } | null {
+    const point = this.projectWorld(x, y, z)
+    if (!point) return null
+    return { l: point.x - pad, t: point.y - pad, r: point.x + pad, b: point.y + pad }
+  }
+
+  private projectWorld(x: number, y: number, z: number): { x: number; y: number } | null {
+    this.camera.updateMatrixWorld()
+    _v.set(x, y, z).project(this.camera)
+    if (_v.z > 1) return null
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    return {
+      x: (_v.x * 0.5 + 0.5) * rect.width + rect.left,
+      y: (-_v.y * 0.5 + 0.5) * rect.height + rect.top,
+    }
   }
 
   private clearAnnouncements(): void {
@@ -1434,6 +2005,7 @@ export class Game {
       pet.play('dance')
       this.fx.burst(pet.home.x, 0.5, pet.home.z, 0xffe08a, 10, 2)
     }
+    saveStars(this.level.id, starCount(this.livingPets()))
     audio.duck(true)
     audio.play('win')
     this.syncSelection()
@@ -1444,7 +2016,7 @@ export class Game {
     if (this.phase === 'victory' || this.phase === 'defeat') return
     this.clearAnnouncements()
     this.phase = 'defeat'
-    this.noteWave(Math.min(this.waveIndex + 1, WAVES.length))
+    this.noteWave(Math.min(this.waveIndex + 1, this.level.waves.length))
     audio.duck(true)
     audio.play('lose')
     this.syncSelection()
@@ -1452,28 +2024,93 @@ export class Game {
   }
 
   retry(): void {
-    for (const tower of this.towers) this.scene.remove(tower.group)
-    for (const enemy of this.enemies) this.scene.remove(enemy.group)
-    for (const proj of this.projectiles) this.scene.remove(proj.mesh)
-    for (const pet of this.pets) this.scene.remove(pet.group)
-    for (const carry of this.carries) {
-      this.scene.remove(carry.beam)
-      this.scene.remove(carry.burst)
-      this.scene.remove(carry.glow)
+    this.installLevel(this.level, 'play')
+  }
+
+  startLevel(id: number): void {
+    this.installLevel(levelById(id), 'play')
+  }
+
+  playSelected(): void {
+    if (!levelUnlocked(this.selectedLevel)) return
+    this.installLevel(levelById(this.selectedLevel), 'play')
+  }
+
+  previewLevel(id: number): void {
+    if (!levelUnlocked(id)) return
+    if (this.phase === 'title' && this.level.id === id) {
+      this.selectedLevel = id
+      this.refreshHud()
+      return
     }
-    this.towers = []
-    this.enemies = []
-    this.pets = []
-    this.projectiles = []
-    this.carries = []
-    this.pending = []
+    this.installLevel(levelById(id), 'title')
+  }
+
+  next(): void {
+    if (this.phase === 'victory') {
+      const id = this.level.id + 1
+      if (id <= LEVELS.length && levelUnlocked(id)) {
+        this.installLevel(levelById(id), 'play')
+        return
+      }
+    }
+    this.installLevel(this.level, 'title')
+  }
+
+  openSettings(): void {
+    this.settingsOpen = true
+    this.refreshHud()
+  }
+
+  closeSettings(): void {
+    this.settingsOpen = false
+    this.refreshHud()
+  }
+
+  updateSettings(patch: Partial<Settings>): void {
+    const next = { ...this.settings, ...patch }
+    if (typeof navigator.vibrate !== 'function') next.haptics = false
+    this.settings = next
+    saveSettings(next)
+    this.showDamage = next.damage
+    audio.apply(next.sound, next.music)
+    if (patch.quality === 'low') this.applyTier('low')
+    else if (patch.quality === 'high') this.applyTier('high')
+    else if (patch.quality === 'auto') {
+      this.slowAccum = 0
+      this.applyTier(detectTier())
+    }
+    this.refreshHud()
+  }
+
+  skipCoach(): void {
+    this.advanceTutor('next')
+    this.refreshHud()
+  }
+
+  private installLevel(level: LevelDef, mode: 'play' | 'title'): void {
+    this.clearActors()
+    this.fx.clear()
+    this.hud.clearTransient()
+    if (this.map) {
+      this.scene.remove(this.map.group)
+      disposeMap(this.map)
+    }
+    this.level = level
+    this.selectedLevel = level.id
+    this.applyBiome(level.biome)
+    this.map = buildMap(level)
+    this.scene.add(this.map.group)
     this.rescues = 0
     this.abductions = 0
     this.waveLog = []
     this.effectiveAt.clear()
-    this.clearAnnouncements()
+    this.lastEffective = -10
+    this.bannerTitle = null
+    this.bannerChips = null
+    this.bannerT = 0
     this.gold = START_GOLD
-    this.phase = 'ready'
+    this.phase = mode === 'title' ? 'title' : 'ready'
     this.waveIndex = 0
     this.countdown = 0
     this.kills = 0
@@ -1484,14 +2121,88 @@ export class Game {
     this.speedChoice = 1
     this.forcedScale = null
     this.selected = null
+    this.settingsOpen = false
     this.userCam = false
     this.cameraLock = null
-    this.applyFraming(true)
+    this.shake = 0
+    this.titleSpin = 0
+    this.waveGate = Infinity
+    this.runGate = Infinity
+    this.tutorStep = mode === 'play' && level.id === 1 && !tutorialSeen() ? 1 : 0
     audio.duck(false)
     this.spawnPets()
+    this.applyFraming(true)
     this.syncMarker()
     this.syncSelection()
     this.refreshHud()
+  }
+
+  private clearActors(): void {
+    for (const tower of this.towers) this.scene.remove(tower.group)
+    for (const enemy of this.enemies) this.scene.remove(enemy.group)
+    for (const proj of this.projectiles) this.scene.remove(proj.mesh)
+    for (const pooled of this.ammoPools.values()) {
+      for (const mesh of pooled) this.scene.remove(mesh)
+    }
+    for (const pet of this.pets) this.scene.remove(pet.group)
+    for (const carry of this.carries) {
+      this.scene.remove(carry.beam)
+      this.scene.remove(carry.burst)
+      this.scene.remove(carry.glow)
+      this.scene.remove(carry.icon)
+    }
+    this.towers = []
+    this.enemies = []
+    this.pets = []
+    this.projectiles = []
+    this.freeProjectiles = []
+    this.ammoPools.clear()
+    this.carries = []
+    this.pending = []
+  }
+
+  private advanceTutor(reason: 'base' | 'weapon' | 'wave' | 'rescue' | 'early' | 'next' | 'breather'): void {
+    if (this.tutorStep <= 0) return
+    const step = this.tutorStep
+    const match =
+      reason === 'next' ||
+      (step === 1 && reason === 'base') ||
+      (step === 2 && reason === 'weapon') ||
+      (step === 3 && reason === 'wave') ||
+      (step === 4 && (reason === 'rescue' || reason === 'breather')) ||
+      (step === 5 && (reason === 'early' || reason === 'wave'))
+    if (!match) return
+    const leaving = this.tutorStep
+    this.tutorStep += 1
+    if (leaving === 2) this.selected = null
+    if (this.tutorStep > 5) {
+      this.tutorStep = 0
+      markTutorial()
+    }
+    this.syncMarker()
+  }
+
+  private takeAmmo(name: string): THREE.Object3D {
+    const pool = this.ammoPools.get(name)
+    const mesh = pool?.pop()
+    if (mesh) {
+      mesh.visible = true
+      return mesh
+    }
+    const created = spawnModel(name)
+    created.userData.ammoName = name
+    const ammoScale = name.includes('arrow') ? 0.65 : name.includes('bullet') ? 1.15 : 1.45
+    created.scale.setScalar(ammoScale)
+    this.scene.add(created)
+    return created
+  }
+
+  private recycleAmmo(mesh: THREE.Object3D): void {
+    mesh.visible = false
+    const name = String(mesh.userData.ammoName ?? '')
+    const pool = this.ammoPools.get(name) ?? []
+    pool.push(mesh)
+    this.ammoPools.set(name, pool)
   }
 
   private expose(): void {
@@ -1503,8 +2214,8 @@ export class Game {
         error: this.error,
         phase: this.phase,
         gold: this.gold,
-        wave: Math.min(this.waveIndex + 1, WAVES.length),
-        waves: WAVES.length,
+        wave: Math.min(this.waveIndex + 1, this.level.waves.length),
+        waves: this.level.waves.length,
         pets: this.livingPets(),
         petMax: PET_COUNT,
         enemies: this.enemies.length,
@@ -1517,11 +2228,20 @@ export class Game {
         stars: starCount(this.livingPets()),
         carries: this.carries.length,
         fps: Math.round(this.fps),
+        draws: this.renderer.info.render.calls,
         zoom: Math.round(this.distance * 10) / 10,
+        board: this.boardSpan(),
+        level: this.level.id,
+        pads: this.level.pads.map((pad) => [pad[0], pad[1]]),
+        hint: { x: this.map.hint.x, z: this.map.hint.z },
+        tutor: this.tutorStep,
+        tier: this.tier,
         log: this.waveLog.map((row) => ({ ...row })),
+        gate: this.gateValue(this.runGate),
       }),
       cellKind: (x, z) => this.map.cells.get(cellKey(x, z))?.kind ?? null,
       project: (x, z, y = 0.4) => {
+        this.camera.updateMatrixWorld()
         _v.set(x, y, z).project(this.camera)
         if (_v.z > 1) return null
         const rect = this.renderer.domElement.getBoundingClientRect()
@@ -1573,9 +2293,9 @@ export class Game {
       },
       debugBoss: () => {
         this.phase = 'wave'
-        this.waveIndex = WAVES.length - 1
+        this.waveIndex = this.level.waves.length - 1
         this.bannerTitle = 'Boss wave'
-        this.bannerChips = waveChips(WAVES[WAVES.length - 1])
+        this.bannerChips = waveChips(this.level.waves[this.level.waves.length - 1])
         this.bannerT = 8
         const boss = this.spawnEnemy('boss', 1, 0.55)
         boss.pos.y = ENEMIES.boss.hover
@@ -1595,9 +2315,9 @@ export class Game {
         this.phase = 'wave'
         const scout = this.spawnEnemy('scout', 1, 0.48)
         const tank = this.spawnEnemy('tank', 1, 0.4)
-        this.fx.popup(scout.pos.x, scout.pos.y + 0.9, scout.pos.z, 'Effective!', '#b6ff8a', 30)
-        this.fx.popup(scout.pos.x + 0.15, scout.pos.y + 0.45, scout.pos.z, '14', '#fff6ea', 30)
-        this.fx.popup(tank.pos.x, tank.pos.y + 0.5, tank.pos.z, '9', '#fff6ea', 30)
+        this.popText(scout.pos.x, scout.pos.y + 0.9, scout.pos.z, 'Effective!', '#b6ff8a', 30)
+        this.popText(scout.pos.x + 0.15, scout.pos.y + 0.45, scout.pos.z, '14', '#fff6ea', 30)
+        this.popText(tank.pos.x, tank.pos.y + 0.5, tank.pos.z, '9', '#fff6ea', 30)
         this.refreshHud()
       },
       deselect: () => {
@@ -1612,8 +2332,31 @@ export class Game {
         this.refreshHud()
       },
       debugWin: () => this.win(),
-      debugLose: () => this.lose(),
+      debugLose: () => {
+        if (this.phase === 'victory' || this.phase === 'defeat') this.phase = 'wave'
+        this.lose()
+      },
       retry: () => this.retry(),
+      startLevel: (id: number) => this.startLevel(id),
+      next: () => this.next(),
+      debugTitle: () => this.installLevel(levelById(this.selectedLevel || 1), 'title'),
+      debugSettings: () => this.openSettings(),
+      debugCoach: (step?: number) => {
+        const n = typeof step === 'number' ? Math.min(5, Math.max(1, Math.round(step))) : 1
+        if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') this.phase = 'ready'
+        this.tutorStep = n
+        if (n === 2) {
+          const tower = this.towers[0]
+          const cell = tower ? this.map.cells.get(cellKey(tower.x, tower.z)) : undefined
+          if (cell) this.selected = cell
+        } else {
+          this.selected = null
+        }
+        this.syncMarker()
+        this.syncSelection()
+        this.refreshHud()
+      },
+      iconUrl: () => this.iconUrl,
     }
   }
 }

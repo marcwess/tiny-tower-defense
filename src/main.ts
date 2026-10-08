@@ -15,11 +15,25 @@ hud.onStart = () => {
 }
 hud.onSpeed = () => game.toggleSpeed()
 hud.onMute = () => game.toggleMute()
+hud.onGear = () => game.openSettings()
 hud.onDamage = () => game.toggleDamage()
 hud.onRetry = () => {
   audio.unlock()
   game.retry()
 }
+hud.onNext = () => {
+  audio.unlock()
+  game.next()
+}
+hud.onPlay = () => {
+  audio.unlock()
+  game.playSelected()
+}
+hud.onPickLevel = (id) => game.previewLevel(id)
+hud.onCoach = () => game.skipCoach()
+hud.onCloseSettings = () => game.closeSettings()
+hud.onSettings = (patch) => game.updateSettings(patch)
+document.addEventListener('gesturestart', (event) => event.preventDefault())
 hud.onAction = (id) => {
   audio.unlock()
   if (!game.act(id)) {
@@ -53,8 +67,16 @@ void game.init().catch((error: unknown) => {
       stars: 0,
       carries: 0,
       fps: 0,
+      draws: 0,
       zoom: 0,
+      board: { width: 0, height: 0 },
+      level: 1,
+      pads: [],
+      hint: { x: 0, z: 0 },
+      tutor: 0,
+      tier: 'low',
       log: [],
+      gate: 99,
     }),
     cellKind: () => null,
     project: () => null,
@@ -74,5 +96,11 @@ void game.init().catch((error: unknown) => {
     debugWin: () => {},
     debugLose: () => {},
     retry: () => {},
+    startLevel: () => {},
+    next: () => {},
+    debugTitle: () => {},
+    debugSettings: () => {},
+    debugCoach: () => {},
+    iconUrl: () => '',
   }
 })

@@ -1,5 +1,6 @@
 import { asset, heartUrl, pieceThumbnail } from './assets'
 import type { WaveChip } from './config'
+import type { Settings } from './progress'
 
 export interface ActionButton {
   id: string
@@ -16,6 +17,30 @@ export interface SelectionView {
   blurb: string
   stats: string
   actions: ActionButton[]
+}
+
+export interface TitleLevel {
+  id: number
+  name: string
+  blurb: string
+  lock: string
+  stars: number
+  unlocked: boolean
+  selected: boolean
+}
+
+export interface CoachBox {
+  l: number
+  t: number
+  r: number
+  b: number
+}
+
+export interface CoachView {
+  text: string
+  target: CoachBox
+  avoid: CoachBox[]
+  lane: Array<{ x: number; y: number }>
 }
 
 export interface HudState {
@@ -38,6 +63,11 @@ export interface HudState {
   bannerChips: WaveChip[] | null
   selection: SelectionView | null
   end: { kind: 'win' | 'lose'; title: string; detail: string; stars: number } | null
+  title: TitleLevel[] | null
+  coach: CoachView | null
+  settingsOpen: boolean
+  settings: Settings
+  hapticsAvailable: boolean
 }
 
 export class Hud {
@@ -45,8 +75,15 @@ export class Hud {
   onStart: () => void = () => {}
   onSpeed: () => void = () => {}
   onMute: () => void = () => {}
+  onGear: () => void = () => {}
   onDamage: () => void = () => {}
   onRetry: () => void = () => {}
+  onNext: () => void = () => {}
+  onPlay: () => void = () => {}
+  onPickLevel: (id: number) => void = () => {}
+  onCoach: () => void = () => {}
+  onCloseSettings: () => void = () => {}
+  onSettings: (patch: Partial<Settings>) => void = () => {}
 
   private root: HTMLElement
   private goldEl: HTMLElement
@@ -82,6 +119,15 @@ export class Hud {
   private holdTimer = 0
   private suppressClick = false
   private muteIcon: HTMLImageElement
+  private titleElScreen: HTMLElement
+  private levelsEl: HTMLElement
+  private coachEl: HTMLElement
+  private coachText: HTMLElement
+  private sheetEl: HTMLElement
+  private nextEl: HTMLButtonElement
+  private levelsBtn: HTMLButtonElement
+  private titleSig = ''
+  private coachSig = ''
 
   constructor(app: HTMLElement) {
     app.innerHTML = `
@@ -91,6 +137,7 @@ export class Hud {
           <div class="pill wave" id="wave"><img alt="" src="${asset('assets/icons/flag.png')}" /><span>1/9</span></div>
           <div class="pill pets" id="pets"><img alt="" src="${heartUrl()}" /><span>5</span></div>
           <button type="button" id="mute" class="round" aria-label="Sound"><img alt="" src="${asset('assets/icons/audio-on.png')}" /></button>
+          <button type="button" id="gear" class="round" aria-label="Settings"><img alt="" src="${asset('assets/ui/mobile-controls/Sprites/Icons/Default/icon_cog.png')}" /></button>
         </header>
         <div id="banner" hidden>
           <p id="banner-title"></p>
@@ -119,7 +166,41 @@ export class Hud {
           <div id="stars" hidden></div>
           <h1 id="end-title"></h1>
           <p id="end-detail"></p>
-          <button type="button" id="retry" class="btn green">Retry</button>
+          <div id="end-row">
+            <button type="button" id="retry" class="btn green">Retry</button>
+            <button type="button" id="next" class="btn blue">Next</button>
+            <button type="button" id="to-levels" class="btn blue" hidden>Levels</button>
+          </div>
+        </div>
+      </div>
+      <div id="title" hidden>
+        <div id="title-copy">
+          <h1><span>Tiny</span><span>Tower</span><span>Defense</span></h1>
+        </div>
+        <div id="title-band">
+          <button type="button" id="play" class="btn green">Play</button>
+          <div id="levels"></div>
+        </div>
+      </div>
+      <div id="coach" hidden>
+        <img id="coach-arrow" alt="" src="${asset('assets/ui/ui-pack/PNG/Green/Default/arrow_basic_s.png')}" />
+        <p id="coach-text"></p>
+        <button type="button" id="coach-next" class="btn yellow">Next</button>
+      </div>
+      <div id="sheet" hidden>
+        <div class="sheet">
+          <h2>Settings</h2>
+          <button type="button" data-set="sound">Sound</button>
+          <button type="button" data-set="music">Music</button>
+          <button type="button" data-set="haptics">Haptics</button>
+          <button type="button" data-set="damage">Damage numbers</button>
+          <div id="quality" class="quality">
+            <span>Quality</span>
+            <button type="button" data-quality="auto">Auto</button>
+            <button type="button" data-quality="low">Low</button>
+            <button type="button" data-quality="high">High</button>
+          </div>
+          <button type="button" id="sheet-close" class="btn blue">Close</button>
         </div>
       </div>
       <div id="loading">
@@ -154,12 +235,46 @@ export class Hud {
     this.damageEl = this.need('#dmg') as HTMLButtonElement
     this.loadingEl = this.need('#loading')
     this.loadingText = this.need('#loading-text')
+    this.titleElScreen = this.need('#title')
+    this.levelsEl = this.need('#levels')
+    this.coachEl = this.need('#coach')
+    this.coachText = this.need('#coach-text')
+    this.sheetEl = this.need('#sheet')
+    this.nextEl = this.need('#next') as HTMLButtonElement
+    this.levelsBtn = this.need('#to-levels') as HTMLButtonElement
 
     this.speedEl.addEventListener('click', () => this.onSpeed())
     this.startEl.addEventListener('click', () => this.onStart())
     this.muteEl.addEventListener('click', () => this.onMute())
+    this.need('#gear').addEventListener('click', () => this.onGear())
     this.damageEl.addEventListener('click', () => this.onDamage())
     this.need('#retry').addEventListener('click', () => this.onRetry())
+    this.nextEl.addEventListener('click', () => this.onNext())
+    this.levelsBtn.addEventListener('click', () => this.onNext())
+    this.need('#play').addEventListener('click', () => this.onPlay())
+    this.need('#coach-next').addEventListener('click', () => this.onCoach())
+    this.need('#sheet-close').addEventListener('click', () => this.onCloseSettings())
+    this.sheetEl.addEventListener('click', (event) => {
+      if (event.target === this.sheetEl) this.onCloseSettings()
+    })
+    this.levelsEl.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest('button')
+      const id = Number(button?.dataset.level)
+      if (id) this.onPickLevel(id)
+    })
+    this.sheetEl.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest('button')
+      if (!(button instanceof HTMLButtonElement)) return
+      if (button.dataset.set) {
+        const key = button.dataset.set as 'sound' | 'music' | 'haptics' | 'damage'
+        const on = button.getAttribute('aria-pressed') !== 'true'
+        this.onSettings({ [key]: on })
+      }
+      if (button.dataset.quality) {
+        const quality = button.dataset.quality as Settings['quality']
+        this.onSettings({ quality })
+      }
+    })
     this.trayEl.addEventListener('pointerdown', (event) => {
       const button = (event.target as HTMLElement).closest('button')
       const id = button?.dataset.part
@@ -214,9 +329,11 @@ export class Hud {
     coin.src = asset('assets/icons/coin.png')
     this.root.appendChild(coin)
     const dest = icon.getBoundingClientRect()
-    const size = 28
+    const size = 22
     const dx = dest.left + (dest.width - size) / 2
     const dy = dest.top + (dest.height - size) / 2
+    const hopX = x + (dx - x) * 0.42
+    const hopY = Math.min(y, dy) - 22
     let settled = false
     const finish = () => {
       if (settled) return
@@ -226,14 +343,14 @@ export class Hud {
     }
     const anim = coin.animate(
       [
-        { transform: `translate(${x - size / 2}px, ${y - size / 2}px) scale(1)`, opacity: 1 },
-        { transform: `translate(${dx}px, ${dy}px) scale(0.8)`, opacity: 1, offset: 0.78 },
-        { transform: `translate(${dx}px, ${dy}px) scale(0.35)`, opacity: 0 },
+        { transform: `translate(${x - size / 2}px, ${y - size / 2}px) scale(0.65)`, opacity: 1 },
+        { transform: `translate(${hopX}px, ${hopY}px) scale(1.35)`, opacity: 1, offset: 0.38 },
+        { transform: `translate(${dx}px, ${dy}px) scale(0.22)`, opacity: 0.2 },
       ],
-      { duration: 620, easing: 'cubic-bezier(.2,.75,.2,1)', fill: 'forwards' },
+      { duration: 340, easing: 'cubic-bezier(.2,.7,.2,1)', fill: 'forwards' },
     )
     void anim.finished.then(finish, finish)
-    window.setTimeout(finish, 780)
+    window.setTimeout(finish, 420)
   }
 
   flashGold(): void {
@@ -267,10 +384,8 @@ export class Hud {
     this.startEl.disabled = !state.startEnabled
     this.countEl.hidden = !state.countdownLabel
     this.countEl.textContent = state.countdownLabel ?? ''
+    this.hintEl.textContent = 'Tap a pad to build, then stack a weapon. Taller towers reach farther.'
     this.hintEl.hidden = !state.hint
-    if (state.hint) {
-      this.hintEl.textContent = 'Tap the grass under the arrow, then stack a weapon. Taller towers reach farther.'
-    }
     this.fillChips(this.previewEl, state.preview, 'chip')
     this.bannerEl.hidden = !state.bannerTitle
     this.bannerTitle.textContent = state.bannerTitle ?? ''
@@ -346,10 +461,214 @@ export class Hud {
       }
       this.endIcon.src =
         state.end.kind === 'win' ? heartUrl() : asset('assets/ui/ui-pack/PNG/Red/Double/icon_cross.png')
+      const lose = state.end.kind === 'lose'
+      this.nextEl.hidden = lose
+      this.levelsBtn.hidden = !lose
     } else {
       this.endEl.hidden = true
       this.starSignature = ''
     }
+    this.renderTitle(state.title)
+    this.renderCoach(state.coach)
+    this.renderSettings(state)
+  }
+
+  private renderTitle(levels: TitleLevel[] | null): void {
+    const show = !!levels
+    this.titleElScreen.hidden = !show
+    this.root.classList.toggle('mode-title', show)
+    if (!levels) {
+      this.titleSig = ''
+      return
+    }
+    const sig = levels.map((level) => `${level.id}:${level.stars}:${level.unlocked}:${level.selected}`).join('|')
+    if (sig === this.titleSig) return
+    this.titleSig = sig
+    const filled = asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')
+    const empty = asset('assets/ui/ui-pack/PNG/Yellow/Double/star_outline.png')
+    this.levelsEl.replaceChildren()
+    for (const level of levels) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.dataset.level = String(level.id)
+      button.className = 'level'
+      button.disabled = !level.unlocked
+      button.classList.toggle('selected', level.selected)
+      button.classList.toggle('locked', !level.unlocked)
+      const stars = document.createElement('span')
+      stars.className = 'level-stars'
+      for (let i = 0; i < 3; i++) {
+        const img = document.createElement('img')
+        img.alt = ''
+        img.src = i < level.stars ? filled : empty
+        stars.append(img)
+      }
+      const name = document.createElement('span')
+      name.className = 'level-name'
+      if (level.unlocked) {
+        name.textContent = level.name
+        const blurb = document.createElement('span')
+        blurb.className = 'level-blurb'
+        blurb.textContent = level.blurb
+        button.append(name, blurb, stars)
+      } else {
+        const icon = document.createElement('img')
+        icon.className = 'level-lock'
+        icon.alt = ''
+        icon.src = asset('assets/ui/mobile-controls/Sprites/Icons/Default/icon_lock.png')
+        name.textContent = level.lock || 'Locked'
+        button.append(icon, name)
+      }
+      this.levelsEl.append(button)
+    }
+  }
+
+  private renderCoach(coach: CoachView | null): void {
+    this.coachEl.hidden = !coach
+    if (!coach) {
+      this.coachSig = ''
+      return
+    }
+    const sig = `${coach.text}:${Math.round(coach.target.l)}:${Math.round(coach.target.t)}:${Math.round(coach.target.r)}`
+    if (sig === this.coachSig) return
+    this.coachSig = sig
+    this.coachText.textContent = coach.text
+    this.coachEl.hidden = false
+    const spot = this.placeCoach(coach)
+    this.coachEl.dataset.side = spot.side
+    this.coachEl.style.left = `${spot.x}px`
+    this.coachEl.style.top = `${spot.y}px`
+  }
+
+  private placeCoach(coach: CoachView): { x: number; y: number; side: string } {
+    const bubbleW = this.coachEl.offsetWidth || 220
+    const bubbleH = this.coachEl.offsetHeight || 96
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    const margin = 14
+    const gap = 22
+    const target = coach.target
+    const cx = (target.l + target.r) / 2
+    const cy = (target.t + target.b) / 2
+    const candidates: Array<{ x: number; y: number; side: string; prefer?: boolean }> = [
+      { x: cx - bubbleW / 2, y: target.t - gap - bubbleH, side: 'down' },
+      { x: cx - bubbleW / 2, y: target.t - bubbleH - 48, side: 'down' },
+      { x: cx - bubbleW / 2, y: target.b + gap, side: 'up' },
+      { x: target.l - gap - bubbleW, y: cy - bubbleH / 2, side: 'right' },
+      { x: target.r + gap, y: cy - bubbleH / 2, side: 'left' },
+      { x: margin, y: cy - bubbleH / 2, side: 'right' },
+      { x: vw - margin - bubbleW, y: cy - bubbleH / 2, side: 'left' },
+      { x: margin, y: target.t - gap - bubbleH, side: 'down' },
+      { x: vw - margin - bubbleW, y: target.t - gap - bubbleH, side: 'down' },
+    ]
+    const panel = coach.avoid.find((box) => box.r - box.l > vw * 0.55 && box.b - box.t > 70)
+    if (panel) {
+      candidates.unshift({
+        x: cx - bubbleW / 2,
+        y: panel.t - gap - bubbleH,
+        side: 'down',
+        prefer: true,
+      })
+    }
+    for (const avoid of coach.avoid) {
+      const y = avoid.t - gap - bubbleH
+      if (Math.abs(cy - (y + bubbleH / 2)) > 220) continue
+      candidates.push({ x: cx - bubbleW / 2, y, side: 'down' })
+      candidates.push({ x: margin, y, side: 'down' })
+    }
+    let best = { x: margin, y: margin + 72, side: 'down', score: Infinity }
+    for (const candidate of candidates) {
+      const x = Math.min(vw - margin - bubbleW, Math.max(margin, candidate.x))
+      const y = Math.min(vh - margin - bubbleH, Math.max(margin, candidate.y))
+      const rect = { l: x, t: y, r: x + bubbleW, b: y + bubbleH }
+      const dist = Math.hypot((rect.l + rect.r) / 2 - cx, (rect.t + rect.b) / 2 - cy)
+      let score = dist
+      if (this.boxesOverlap(rect, this.padBox(target, 10))) score += 4000
+      for (const avoid of coach.avoid) {
+        if (this.boxesOverlap(rect, this.padBox(avoid, 6))) score += 2500
+      }
+      if (this.hitsLane(rect, coach.lane, cx, cy)) score += dist < 200 ? 110 : 800
+      if (candidate.prefer && score < 4000) score -= 1800
+      if (score < best.score) best = { x, y, side: candidate.side, score }
+    }
+    const bx = best.x + bubbleW / 2
+    const by = best.y + bubbleH / 2
+    const side = Math.abs(cx - bx) > Math.abs(cy - by) ? (cx > bx ? 'right' : 'left') : cy > by ? 'down' : 'up'
+    best.side = side
+    const arrow = this.coachEl.querySelector('#coach-arrow')
+    if (arrow instanceof HTMLElement) {
+      arrow.style.left = ''
+      arrow.style.right = ''
+      arrow.style.top = ''
+      arrow.style.bottom = ''
+      if (side === 'down' || side === 'up') {
+        const rel = (cx - best.x) / bubbleW
+        arrow.style.left = `${Math.min(78, Math.max(22, rel * 100))}%`
+        arrow.style.right = 'auto'
+      }
+    }
+    return best
+  }
+
+  private padBox(box: CoachBox, pad: number): CoachBox {
+    return { l: box.l - pad, t: box.t - pad, r: box.r + pad, b: box.b + pad }
+  }
+
+  private boxesOverlap(a: CoachBox, b: CoachBox): boolean {
+    return a.l < b.r && a.r > b.l && a.t < b.b && a.b > b.t
+  }
+
+  private hitsLane(rect: CoachBox, lane: Array<{ x: number; y: number }>, cx: number, cy: number): boolean {
+    if (lane.length < 2) return false
+    const samples = [
+      [(rect.l + rect.r) / 2, (rect.t + rect.b) / 2],
+      [rect.l, rect.t],
+      [rect.r, rect.t],
+      [rect.l, rect.b],
+      [rect.r, rect.b],
+    ]
+    const nearTarget = (x: number, y: number) => Math.hypot(x - cx, y - cy) < 120
+    for (let i = 1; i < lane.length; i++) {
+      const a = lane[i - 1]
+      const b = lane[i]
+      if (nearTarget(a.x, a.y) && nearTarget(b.x, b.y)) continue
+      for (const [px, py] of samples) {
+        if (this.segmentDistance(a.x, a.y, b.x, b.y, px, py) < 26) return true
+      }
+    }
+    return false
+  }
+
+  private segmentDistance(ax: number, ay: number, bx: number, by: number, px: number, py: number): number {
+    const abx = bx - ax
+    const aby = by - ay
+    const ab2 = abx * abx + aby * aby || 1
+    let t = ((px - ax) * abx + (py - ay) * aby) / ab2
+    t = Math.max(0, Math.min(1, t))
+    return Math.hypot(px - (ax + abx * t), py - (ay + aby * t))
+  }
+
+  private renderSettings(state: HudState): void {
+    this.sheetEl.hidden = !state.settingsOpen
+    const rows: Array<['sound' | 'music' | 'haptics' | 'damage', boolean]> = [
+      ['sound', state.settings.sound],
+      ['music', state.settings.music],
+      ['haptics', state.settings.haptics],
+      ['damage', state.settings.damage],
+    ]
+    for (const [key, on] of rows) {
+      const button = this.sheetEl.querySelector(`[data-set="${key}"]`)
+      if (!(button instanceof HTMLButtonElement)) continue
+      button.setAttribute('aria-pressed', on ? 'true' : 'false')
+      button.disabled = key === 'haptics' && !state.hapticsAvailable
+      const label = button.dataset.label ?? button.textContent?.replace(/: .*$/, '') ?? key
+      button.dataset.label = label
+      button.textContent = `${label}: ${on ? 'On' : 'Off'}`
+    }
+    this.sheetEl.querySelectorAll('[data-quality]').forEach((node) => {
+      if (!(node instanceof HTMLButtonElement)) return
+      node.classList.toggle('pressed', node.dataset.quality === state.settings.quality)
+    })
   }
 
   private fillChips(host: HTMLElement, chips: WaveChip[] | null, kind: 'chip' | 'bchip'): void {
