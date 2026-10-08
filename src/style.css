@@ -4,6 +4,10 @@
   font-weight: 400;
   font-style: normal;
   font-display: swap;
+  /* Outlines reach 1.25em, but the font's typo ascender is 1em, so a tight line box slices C, T, and R. */
+  ascent-override: 130%;
+  descent-override: 12%;
+  line-gap-override: 0%;
 }
 
 @font-face {
@@ -127,7 +131,7 @@ html, body, #app {
 }
 
 #card {
-  padding: 12px 10px 14px;
+  padding: 16px 10px 14px;
   color: var(--ink);
   background: var(--panel) center / 100% 100% no-repeat;
   max-height: min(70vh, 640px);
@@ -141,6 +145,8 @@ html, body, #app {
   font-family: 'Kenney Thick', 'Kenney Bold', sans-serif;
   font-size: 20px;
   font-weight: 400;
+  line-height: 1.45;
+  padding-top: 0.08em;
 }
 
 #card-blurb, #card-stats {
@@ -150,7 +156,7 @@ html, body, #app {
   overflow-wrap: anywhere;
 }
 
-#card-stats { color: #2d6a45; margin-top: 2px; }
+#card-stats { color: #2d6a45; margin-top: 4px; line-height: 1.55; padding-top: 0.08em; }
 
 #card-blurb {
   margin-top: 6px;
@@ -182,12 +188,13 @@ html, body, #app {
   width: 100%;
   min-width: 0;
   min-height: 0;
-  padding: 4px 2px 8px;
+  padding: 6px 3px 10px;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  gap: 1px;
+  gap: 0;
 }
 
 .piece.blue { background-image: var(--btn-blue); color: #f4fbff; }
@@ -216,14 +223,15 @@ html, body, #app {
 .piece-name, .piece-effect {
   display: block;
   width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
   white-space: nowrap;
   text-align: center;
+  line-height: 1.55;
+  padding: 0.16em 0.08em 0;
 }
 
-.piece-name { font-size: 11px; line-height: 1.05; }
-.piece-effect { font-size: 11px; line-height: 1.1; opacity: 0.85; }
+.piece-name { font-size: 11px; }
+.piece-effect { font-size: 10px; opacity: 0.92; }
 .piece-cost {
   display: flex;
   align-items: center;
@@ -309,6 +317,15 @@ h1 {
   40% { transform: translateX(3px); }
   60% { transform: translateX(-2px); }
   80% { transform: translateX(2px); }
+}
+
+@media (max-width: 380px) {
+  #hud { padding-left: 6px; padding-right: 6px; }
+  #card { padding: 14px 6px 12px; }
+  #tray { gap: 4px; }
+  .piece { padding: 5px 2px 8px; }
+  .piece-name, .piece-effect { font-size: 10px; padding: 0.18em 0.04em 0; }
+  .thumb { width: 36px; height: 36px; }
 }
 
 @media (min-width: 480px) {

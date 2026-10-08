@@ -189,11 +189,12 @@ export class Game {
   private fpsFrames = 0
   private fpsAccum = 0
   private hint: boolean
-  private target = new THREE.Vector3(3.15, 0.08, 4.9)
-  private distance = 18.2
+  private target = new THREE.Vector3(2.6, 0.2, 4.7)
+  private distance = 20.2
   private visualTime = 0
-  private pitch = 0.72
-  private readonly azimuth = 2.25
+  private pitch = 0.76
+  private azimuth = 2.8
+  private lookY = 0.25
   private userCam = false
   private cameraLock: { pos: THREE.Vector3; look: THREE.Vector3 } | null = null
   private pointers = new Map<number, { x: number; y: number; sx: number; sy: number }>()
@@ -327,20 +328,45 @@ export class Game {
     this.renderer.setSize(width, height, false)
     this.renderer.domElement.style.width = `${width}px`
     this.renderer.domElement.style.height = `${height}px`
+    this.applyFraming(!this.userCam)
+  }
+
+  /**
+   * Portrait turns the board so the UFO route runs down the screen and the pet
+   * pen stays above the bottom bar. Wider screens keep the closer three-quarter view.
+   */
+  private framing(): {
+    fov: number
+    pitch: number
+    distance: number
+    azimuth: number
+    lookY: number
+    tx: number
+    ty: number
+    tz: number
+  } {
+    const aspect = this.camera.aspect
+    if (aspect < 0.62) {
+      return { fov: 42, pitch: 0.76, distance: 20.2, azimuth: 2.8, lookY: 0.25, tx: 2.6, ty: 0.2, tz: 4.7 }
+    }
+    if (aspect < 1.05) {
+      return { fov: 38, pitch: 0.74, distance: 18.4, azimuth: 2.5, lookY: 0.18, tx: 3.0, ty: 0.12, tz: 4.8 }
+    }
+    return { fov: 32, pitch: 0.72, distance: 15.4, azimuth: 2.25, lookY: 0.12, tx: 3.15, ty: 0.08, tz: 4.9 }
+  }
+
+  private applyFraming(resetView: boolean): void {
     const frame = this.framing()
     this.camera.fov = frame.fov
     this.pitch = frame.pitch
+    this.azimuth = frame.azimuth
+    this.lookY = frame.lookY
     this.camera.updateProjectionMatrix()
-    if (!this.userCam) this.distance = frame.distance
+    if (resetView) {
+      this.distance = frame.distance
+      this.target.set(frame.tx, frame.ty, frame.tz)
+    }
     this.clampCamera()
-  }
-
-  /** Portrait pulls back enough to show sky and the dirt lip. Wider screens sit closer. */
-  private framing(): { fov: number; pitch: number; distance: number } {
-    const aspect = this.camera.aspect
-    if (aspect < 0.62) return { fov: 40, pitch: 0.72, distance: 18.2 }
-    if (aspect < 1.05) return { fov: 36, pitch: 0.74, distance: 16.8 }
-    return { fov: 32, pitch: 0.72, distance: 15.4 }
   }
 
   private clampCamera(): void {
@@ -362,7 +388,7 @@ export class Game {
       Math.sin(this.pitch) * this.distance + Math.cos(performance.now() * 0.05) * this.shake,
       this.target.z + Math.cos(this.azimuth) * horiz,
     )
-    this.camera.lookAt(this.target.x, 0.12, this.target.z)
+    this.camera.lookAt(this.target.x, this.lookY, this.target.z)
   }
 
   private bindInput(): void {
@@ -1271,8 +1297,7 @@ export class Game {
     this.selected = null
     this.userCam = false
     this.cameraLock = null
-    this.distance = this.framing().distance
-    this.target.set(3.15, 0.08, 4.9)
+    this.applyFraming(true)
     audio.duck(false)
     this.spawnPets()
     this.syncMarker()
@@ -1302,8 +1327,8 @@ export class Game {
         zoom: Math.round(this.distance * 10) / 10,
       }),
       cellKind: (x, z) => this.map.cells.get(cellKey(x, z))?.kind ?? null,
-      project: (x, z) => {
-        _v.set(x, 0.4, z).project(this.camera)
+      project: (x, z, y = 0.4) => {
+        _v.set(x, y, z).project(this.camera)
         if (_v.z > 1) return null
         const rect = this.renderer.domElement.getBoundingClientRect()
         return {

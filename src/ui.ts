@@ -175,27 +175,34 @@ export class Hud {
   }
 
   flyCoin(x: number, y: number): void {
-    const pill = this.goldEl.parentElement
-    if (!pill) return
+    const icon = this.goldEl.parentElement?.querySelector('img')
+    if (!(icon instanceof HTMLImageElement)) return
     const coin = document.createElement('img')
     coin.alt = ''
     coin.className = 'fly-coin'
     coin.src = asset('assets/icons/coin.png')
     this.root.appendChild(coin)
-    const dest = pill.getBoundingClientRect()
-    const dx = dest.left + dest.width * 0.35
-    const dy = dest.top + dest.height * 0.35
-    const anim = coin.animate(
-      [
-        { transform: `translate(${x}px, ${y}px) scale(1)`, opacity: 1 },
-        { transform: `translate(${dx}px, ${dy}px) scale(0.55)`, opacity: 1 },
-      ],
-      { duration: 520, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' },
-    )
-    anim.onfinish = () => {
+    const dest = icon.getBoundingClientRect()
+    const size = 28
+    const dx = dest.left + (dest.width - size) / 2
+    const dy = dest.top + (dest.height - size) / 2
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
       coin.remove()
       this.flashGold()
     }
+    const anim = coin.animate(
+      [
+        { transform: `translate(${x - size / 2}px, ${y - size / 2}px) scale(1)`, opacity: 1 },
+        { transform: `translate(${dx}px, ${dy}px) scale(0.8)`, opacity: 1, offset: 0.78 },
+        { transform: `translate(${dx}px, ${dy}px) scale(0.35)`, opacity: 0 },
+      ],
+      { duration: 620, easing: 'cubic-bezier(.2,.75,.2,1)', fill: 'forwards' },
+    )
+    void anim.finished.then(finish, finish)
+    window.setTimeout(finish, 780)
   }
 
   flashGold(): void {

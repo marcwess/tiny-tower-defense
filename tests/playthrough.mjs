@@ -6,10 +6,23 @@ const PORT = 4173
 const URL = `http://127.0.0.1:${PORT}/?capture=1`
 
 const preview = spawn(
-  'npx',
-  ['vite', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'],
-  { stdio: ['ignore', 'pipe', 'pipe'] },
+  process.execPath,
+  ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'],
+  { stdio: ['ignore', 'pipe', 'pipe'], detached: true },
 )
+
+function stopPreview() {
+  if (preview.exitCode !== null || preview.pid == null) return
+  try {
+    process.kill(-preview.pid, 'SIGKILL')
+  } catch {
+    try {
+      preview.kill('SIGKILL')
+    } catch {
+      /* already gone */
+    }
+  }
+}
 
 let previewLog = ''
 preview.stdout.on('data', (chunk) => {
@@ -236,5 +249,5 @@ try {
   if (errors.length) throw new Error(errors.join('\n'))
   console.log('playthrough ok')
 } finally {
-  preview.kill('SIGTERM')
+  stopPreview()
 }

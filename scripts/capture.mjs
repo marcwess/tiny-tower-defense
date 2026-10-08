@@ -18,8 +18,21 @@ const OUT = '/opt/cursor/artifacts/screenshots'
 const preview = spawn(
   process.execPath,
   ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'],
-  { stdio: 'inherit' },
+  { stdio: 'inherit', detached: true },
 )
+
+function stopPreview() {
+  if (preview.exitCode !== null || preview.pid == null) return
+  try {
+    process.kill(-preview.pid, 'SIGKILL')
+  } catch {
+    try {
+      preview.kill('SIGKILL')
+    } catch {
+      /* already gone */
+    }
+  }
+}
 
 async function waitForServer() {
   for (let i = 0; i < 50; i++) {
@@ -83,7 +96,25 @@ try {
     api.startWave()
     api.deselect()
   })
-  await delay(1600)
+  await delay(1400)
+  await page.evaluate(() => window.__TINY_TD__.setTimeScale(0))
+  await page.waitForFunction(() => document.querySelectorAll('.fly-coin').length === 0)
+  const portraitFrame = await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    return {
+      spawn: api.project(1, 10.4, 0.55),
+      chick: api.project(3.02, 0.12, 0.5),
+      fox: api.project(4.22, 0.26, 0.55),
+      dog: api.project(1.72, 0.28, 0.55),
+      end: api.project(3, 0.1, 0.45),
+    }
+  })
+  console.log('portrait frame', JSON.stringify(portraitFrame))
+  for (const [name, point] of Object.entries(portraitFrame)) {
+    if (!point || point.x < 16 || point.x > 374 || point.y < 96 || point.y > 720) {
+      throw new Error(`portrait framing missed ${name}: ${JSON.stringify(point)}`)
+    }
+  }
   await page.screenshot({ path: `${OUT}/portrait_gameplay.png` })
   const river = await page.evaluate(() => {
     const pts = []
@@ -120,9 +151,17 @@ try {
     api.buy(2, 7, 'roof-b')
     api.buy(2, 7, 'cannon')
     api.deselect()
-    api.cameraFocus(2, 7, 7.2)
+    api.cameraLook(4.73, 5.81, -0.67, 2, 1.9, 7)
   })
   await delay(500)
+  const towerFrame = await page.evaluate(() => ({
+    spire: window.__TINY_TD__.project(2, 7, 4.0),
+    base: window.__TINY_TD__.project(2, 7, 0.3),
+  }))
+  console.log('tower frame', JSON.stringify(towerFrame))
+  if (!towerFrame.spire || towerFrame.spire.y < 96 || !towerFrame.base || towerFrame.base.y > 640) {
+    throw new Error(`stacked tower hits the HUD: ${JSON.stringify(towerFrame)}`)
+  }
   await page.screenshot({ path: `${OUT}/stacked_tower.png` })
 
   await page.setViewportSize({ width: 360, height: 780 })
@@ -151,6 +190,48 @@ try {
   })
   console.log('panel', JSON.stringify(boxes))
   await page.screenshot({ path: `${OUT}/build_panel.png` })
+  await page.screenshot({ path: `${OUT}/build_panel_360.png` })
+  const labelClip = await page.evaluate(() => {
+    const buttons = [...document.querySelectorAll('#tray button')]
+    const rects = buttons.map((button) => button.getBoundingClientRect())
+    const left = Math.min(...rects.map((rect) => rect.left))
+    const top = Math.min(...rects.map((rect) => rect.top))
+    const right = Math.max(...rects.map((rect) => rect.right))
+    const bottom = Math.max(...rects.map((rect) => rect.bottom))
+    return { x: left, y: top, width: right - left, height: bottom - top }
+  })
+  await page.screenshot({ path: `${OUT}/shop_labels_360.png`, clip: labelClip })
+
+  await page.setViewportSize({ width: 320, height: 780 })
+  await delay(300)
+  const boxes320 = await page.evaluate(() => {
+    const card = document.querySelector('#card')?.getBoundingClientRect()
+    const buttons = [...document.querySelectorAll('#tray button')].map((button) => {
+      const rect = button.getBoundingClientRect()
+      return {
+        id: button.dataset.part,
+        text: button.innerText.replace(/\s+/g, ' '),
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        r: Math.round(rect.right),
+        b: Math.round(rect.bottom),
+        w: Math.round(rect.width),
+      }
+    })
+    return { card: card && { x: card.x, y: card.y, r: card.right, b: card.bottom, w: card.width }, buttons }
+  })
+  console.log('panel320', JSON.stringify(boxes320))
+  await page.screenshot({ path: `${OUT}/build_panel_320.png` })
+  const labelClip320 = await page.evaluate(() => {
+    const buttons = [...document.querySelectorAll('#tray button')]
+    const rects = buttons.map((button) => button.getBoundingClientRect())
+    const left = Math.min(...rects.map((rect) => rect.left))
+    const top = Math.min(...rects.map((rect) => rect.top))
+    const right = Math.max(...rects.map((rect) => rect.right))
+    const bottom = Math.max(...rects.map((rect) => rect.bottom))
+    return { x: left, y: top, width: right - left, height: bottom - top }
+  })
+  await page.screenshot({ path: `${OUT}/shop_labels_320.png`, clip: labelClip320 })
   await page.setViewportSize({ width: 390, height: 844 })
 
   await page.evaluate(() => {
@@ -184,8 +265,21 @@ try {
   await delay(900)
   await page.screenshot({ path: `${OUT}/landscape_gameplay.png` })
 
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.evaluate(() => {
+    window.__TINY_TD__.retry()
+    window.__TINY_TD__.buy(2, 7, 'base')
+    window.__TINY_TD__.buy(2, 7, 'turret')
+    window.__TINY_TD__.buy(3, 4, 'base')
+    window.__TINY_TD__.buy(3, 4, 'ballista')
+    window.__TINY_TD__.startWave()
+    window.__TINY_TD__.deselect()
+  })
+  await delay(900)
+  await page.screenshot({ path: `${OUT}/desktop_1280x800.png` })
+
   await browser.close()
   console.log('screenshots written to', OUT)
 } finally {
-  preview.kill('SIGTERM')
+  stopPreview()
 }

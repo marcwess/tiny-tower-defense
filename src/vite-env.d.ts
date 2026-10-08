@@ -23,7 +23,7 @@ interface TinyApi {
   error: string | null
   getState: () => TinyState
   cellKind: (x: number, z: number) => string | null
-  project: (x: number, z: number) => { x: number; y: number } | null
+  project: (x: number, z: number, y?: number) => { x: number; y: number } | null
   buy: (x: number, z: number, part: string) => boolean
   startWave: () => void
   setTimeScale: (scale: number) => void

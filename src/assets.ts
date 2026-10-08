@@ -76,6 +76,8 @@ export function kitMaterial(): THREE.MeshLambertMaterial {
  * their own vertices, pinned to one water-blue texel.
  */
 const WATER_UV = { u: 0.117, v: 0.94 }
+/** Bridge decks ship with a black UV at (0, 1). Pin those faces to a flat wood texel. */
+const WOOD_UV = { u: 0.03, v: 0.51 }
 
 function configureAtlas(map: THREE.Texture): void {
   map.colorSpace = THREE.SRGBColorSpace
@@ -111,6 +113,8 @@ function repairRiverUvs(mesh: THREE.Mesh): void {
       maxV = Math.max(maxV, uv.getY(id))
     }
     const smear = maxU - minU + (maxV - minV) >= 0.045
+    const blank = maxU < 0.01 && minV > 0.99
+    const pin = smear ? WATER_UV : blank ? WOOD_UV : null
     for (let k = 0; k < 3; k++) {
       const id = ids[k]
       const o = (tri * 3 + k) * 3
@@ -123,8 +127,8 @@ function repairRiverUvs(mesh: THREE.Mesh): void {
         normals[o + 2] = normal.getZ(id)
       }
       const uo = (tri * 3 + k) * 2
-      uvs[uo] = smear ? WATER_UV.u : uv.getX(id)
-      uvs[uo + 1] = smear ? WATER_UV.v : uv.getY(id)
+      uvs[uo] = pin ? pin.u : uv.getX(id)
+      uvs[uo + 1] = pin ? pin.v : uv.getY(id)
     }
   }
 
