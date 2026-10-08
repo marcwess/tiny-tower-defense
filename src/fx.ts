@@ -176,8 +176,8 @@ export class Fx {
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false })
     const sprite = new THREE.Sprite(mat)
     sprite.position.set(x, y, z)
-    const wide = Math.min(1.8, 0.42 + text.length * 0.11)
-    sprite.scale.set(wide, 0.42, 1)
+    const wide = Math.min(2.4, 0.7 + text.length * 0.14)
+    sprite.scale.set(wide, 0.62, 1)
     this.scene.add(sprite)
     this.popups.push({ sprite, life, max: life, vy: 0.65 })
   }

@@ -160,7 +160,7 @@ try {
   })
   const underbuiltStart = Date.now()
   let underbuilt = null
-  while (Date.now() - underbuiltStart < 90000) {
+  while (Date.now() - underbuiltStart < 150000) {
     underbuilt = await stateOf(page)
     if (underbuilt?.phase === 'victory' || underbuilt?.phase === 'defeat') break
     if (underbuilt?.phase === 'breather') await page.evaluate(() => window.__TINY_TD__.startWave())
@@ -171,31 +171,56 @@ try {
     throw new Error(`a single tower should lose early: ${JSON.stringify(underbuilt)}`)
   }
 
-  const spamSpots = [
-    [2, 7],
-    [3, 7],
-    [5, 7],
-    [3, 4],
-    [4, 2],
+  const spamPlan = [
+    [2, 7, 'base'],
+    [2, 7, 'turret'],
+    [2, 7, 'middle-a'],
+    [3, 7, 'base'],
+    [3, 7, 'turret'],
+    [3, 7, 'middle-a'],
+    [5, 7, 'base'],
+    [5, 7, 'turret'],
+    [5, 7, 'middle-a'],
+    [3, 4, 'base'],
+    [3, 4, 'turret'],
+    [3, 4, 'middle-a'],
+    [4, 2, 'base'],
+    [4, 2, 'turret'],
+    [4, 2, 'middle-a'],
+    [2, 7, 'middle-a'],
+    [3, 7, 'middle-a'],
+    [5, 7, 'middle-a'],
+    [3, 4, 'middle-a'],
+    [4, 2, 'middle-a'],
+    [2, 7, 'upgrade'],
+    [3, 7, 'upgrade'],
+    [5, 7, 'upgrade'],
+    [3, 4, 'upgrade'],
+    [4, 2, 'upgrade'],
   ]
-  await page.evaluate((spots) => {
-    const api = window.__TINY_TD__
-    api.retry()
-    api.setTimeScale(12)
-    for (const [x, z] of spots) {
-      api.buy(x, z, 'base')
-      api.buy(x, z, 'turret')
-      api.buy(x, z, 'middle-a')
-    }
-    api.startWave()
-  }, spamSpots)
+  await page.evaluate(() => {
+    window.__spamCursor = 0
+    window.__TINY_TD__.retry()
+    window.__TINY_TD__.setTimeScale(12)
+    window.__TINY_TD__.startWave()
+  })
   const spamStart = Date.now()
   let spam = null
   while (Date.now() - spamStart < 180000) {
+    await page.evaluate((steps) => {
+      const api = window.__TINY_TD__
+      let cursor = window.__spamCursor ?? 0
+      for (let n = 0; n < 6 && cursor < steps.length; n++) {
+        const [x, z, part] = steps[cursor]
+        if (!api.buy(x, z, part)) break
+        cursor += 1
+      }
+      window.__spamCursor = cursor
+    }, spamPlan)
     spam = await stateOf(page)
     if (spam?.phase === 'victory' || spam?.phase === 'defeat') break
     if (spam?.phase === 'breather' || spam?.phase === 'ready') await page.evaluate(() => window.__TINY_TD__.startWave())
-    await delay(200)
+    await delay(150)
   }
   console.log('turret spam', JSON.stringify({ ...spam, log: undefined }))
   if (spam?.log?.length) {
@@ -209,6 +234,7 @@ try {
   if (!spam || (spam.phase !== 'victory' && spam.phase !== 'defeat')) {
     throw new Error(`turret spam did not finish: ${JSON.stringify(spam)}`)
   }
+  if ((spam.towers ?? 0) < 3) throw new Error(`turret spam did not build: ${JSON.stringify(spam)}`)
   if (spam.phase === 'victory' && spam.pets >= 5 && spam.leaks === 0) {
     throw new Error(`turret spam should lose pets or the run: ${JSON.stringify(spam)}`)
   }

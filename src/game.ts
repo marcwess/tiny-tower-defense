@@ -543,7 +543,7 @@ export class Game {
     }
     let scaled = raw * (this.forcedScale ?? this.speedChoice)
     let guard = 0
-    while (scaled > 0 && guard < 20) {
+    while (scaled > 0 && guard < 80) {
       const dt = Math.min(0.02, scaled)
       this.tick(dt)
       scaled -= dt
@@ -677,7 +677,7 @@ export class Game {
       new THREE.MeshBasicMaterial({
         color: 0xdff8ff,
         transparent: true,
-        opacity: 0.42,
+        opacity: 0.72,
         depthWrite: false,
         side: THREE.DoubleSide,
       }),
@@ -686,8 +686,8 @@ export class Game {
     const icon = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: this.heartTexture(), transparent: true, depthWrite: false }),
     )
-    icon.scale.set(0.46, 0.46, 1)
-    icon.position.y = ENEMIES[enemy.kind].scale * 1.35 + 0.35
+    icon.scale.set(0.9, 0.9, 1)
+    icon.position.y = ENEMIES[enemy.kind].scale * 0.85 + 0.55
     enemy.group.add(icon)
     this.scene.add(beam)
     this.scene.add(burst)
@@ -739,7 +739,7 @@ export class Game {
   private placeBeam(carry: Carry, x: number, petY: number, z: number, ufoY: number): void {
     const height = Math.max(0.25, ufoY - petY)
     carry.beam.position.set(x, petY, z)
-    carry.beam.scale.set(0.22, height, 0.22)
+    carry.beam.scale.set(0.46, height, 0.46)
     carry.burst.position.set(x, petY + 0.02, z)
     carry.burst.rotation.y += 0.08
     carry.burst.scale.setScalar(0.42)
@@ -947,7 +947,7 @@ export class Game {
     const last = this.effectiveAt.get(enemy.id) ?? -10
     if (this.time - last < 0.55) return
     this.effectiveAt.set(enemy.id, this.time)
-    this.fx.popup(enemy.pos.x, enemy.pos.y + 0.85, enemy.pos.z, 'Effective!', '#b6ff8a', 1.15)
+    this.fx.popup(enemy.pos.x, enemy.pos.y + 1.15, enemy.pos.z, 'Effective!', '#b6ff8a', 1.2)
   }
 
   private splash(proj: Projectile, origin: THREE.Vector3): void {
@@ -1425,6 +1425,7 @@ export class Game {
     audio.duck(true)
     audio.play('win')
     this.syncSelection()
+    this.refreshHud()
   }
 
   private lose(): void {
@@ -1434,6 +1435,7 @@ export class Game {
     audio.duck(true)
     audio.play('lose')
     this.syncSelection()
+    this.refreshHud()
   }
 
   retry(): void {

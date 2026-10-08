@@ -34,6 +34,10 @@ function stopPreview() {
   }
 }
 
+function stateOf(page) {
+  return page.evaluate(() => window.__TINY_TD__?.getState())
+}
+
 async function clipTray(page) {
   return page.evaluate(() => {
     const buttons = [...document.querySelectorAll('#tray button')]
@@ -89,7 +93,7 @@ try {
     viewport: { width: 390, height: 844 },
     hasTouch: true,
     isMobile: true,
-    deviceScaleFactor: 2,
+    deviceScaleFactor: 1,
   })
   page.on('pageerror', (error) => {
     console.error('pageerror', error.message)
@@ -244,8 +248,8 @@ try {
 
   await page.setViewportSize({ width: 390, height: 844 })
   await delay(200)
-  const preview = await page.locator('#preview').innerText()
-  if (!preview.toLowerCase().includes('weak to')) throw new Error(`preview missing weak-to: ${preview}`)
+  const previewText = await page.locator('#preview').innerText()
+  if (!previewText.toLowerCase().includes('weak to')) throw new Error(`preview missing weak-to: ${previewText}`)
   await page.screenshot({ path: `${OUT}/preview_weak.png` })
 
   await page.evaluate(() => {
@@ -262,14 +266,22 @@ try {
     const api = window.__TINY_TD__
     api.retry()
     api.setTimeScale(1)
-    api.cameraFocus(3, 1.1, 9.2)
+    api.cameraFocus(3, 0.6, 8.4)
     api.debugAbduct()
   })
-  await delay(500)
+  await delay(420)
+  await page.evaluate(() => window.__TINY_TD__.setTimeScale(0))
+  const carryState = await stateOf(page)
+  console.log('carry', JSON.stringify(carryState))
+  if (!carryState?.carries) throw new Error('abduction did not start')
   await page.screenshot({ path: `${OUT}/pet_carry.png` })
   await page.screenshot({ path: `${OUT}/pet_abduction.png` })
-  await page.evaluate(() => window.__TINY_TD__.debugRescue())
-  await delay(700)
+  await page.evaluate(() => {
+    window.__TINY_TD__.setTimeScale(1)
+    window.__TINY_TD__.debugRescue()
+  })
+  await delay(220)
+  await page.evaluate(() => window.__TINY_TD__.setTimeScale(0))
   await page.screenshot({ path: `${OUT}/pet_rescue.png` })
 
   await page.evaluate(() => {
@@ -291,6 +303,7 @@ try {
     api.retry()
     api.setTimeScale(0)
     api.debugBoss()
+    api.cameraFocus(2.2, 5.2, 11)
     api.deselect()
   })
   await delay(250)

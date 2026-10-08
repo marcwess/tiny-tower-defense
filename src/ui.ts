@@ -72,6 +72,7 @@ export class Hud {
   private loadingEl: HTMLElement
   private loadingText: HTMLElement
   private signature = ''
+  private starSignature = ''
   private gold = -1
   private actions: ActionButton[] = []
   private focusedId: string | null = null
@@ -313,15 +314,19 @@ export class Hud {
       this.endDetail.textContent = state.end.detail
       const stars = state.end.kind === 'win' ? state.end.stars : 0
       this.starsEl.hidden = stars <= 0
-      this.starsEl.innerHTML = ''
-      if (stars > 0) {
-        const filled = asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')
-        const empty = asset('assets/ui/ui-pack/PNG/Yellow/Double/star_outline.png')
-        for (let i = 0; i < 3; i++) {
-          const img = document.createElement('img')
-          img.alt = i < stars ? 'Star' : 'Empty star'
-          img.src = i < stars ? filled : empty
-          this.starsEl.appendChild(img)
+      const starKey = `${state.end.kind}:${stars}`
+      if (starKey !== this.starSignature) {
+        this.starSignature = starKey
+        this.starsEl.innerHTML = ''
+        if (stars > 0) {
+          const filled = asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')
+          const empty = asset('assets/ui/ui-pack/PNG/Yellow/Double/star_outline.png')
+          for (let i = 0; i < 3; i++) {
+            const img = document.createElement('img')
+            img.alt = i < stars ? 'Star' : 'Empty star'
+            img.src = i < stars ? filled : empty
+            this.starsEl.appendChild(img)
+          }
         }
       }
       this.endIcon.src = asset(
@@ -329,6 +334,7 @@ export class Hud {
       )
     } else {
       this.endEl.hidden = true
+      this.starSignature = ''
     }
   }
 
