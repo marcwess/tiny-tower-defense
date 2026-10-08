@@ -1,5 +1,5 @@
 import type { WaveDef } from './config'
-import { HINT_CELL, PATH, type PathTile } from './pathing'
+import { HINT_CELL, type PathTile } from './pathing'
 import type { PetSpot } from './pets'
 
 export interface PaintCell {
@@ -22,118 +22,156 @@ export interface LevelDef {
   pads: Array<[number, number]>
   pets: PetSpot[]
   waves: WaveDef[]
+  /** Meadow is taller than the other maps so a 3/4 camera still fills a phone. */
+  cols?: number
+  rows?: number
 }
 
+/** 7 wide by 14 tall. Spawn at the far end, pen one row up from the near edge. */
+const MEADOW_PATH: PathTile[] = [
+  { x: 1, z: 13, model: 'tile-spawn', rot: 0 },
+  { x: 1, z: 12, model: 'tile-straight', rot: 0 },
+  { x: 1, z: 11, model: 'tile-straight', rot: 0 },
+  { x: 1, z: 10, model: 'tile-corner-round', rot: 0 },
+  { x: 2, z: 10, model: 'tile-straight', rot: 1 },
+  { x: 3, z: 10, model: 'tile-straight', rot: 1 },
+  { x: 4, z: 10, model: 'tile-straight', rot: 1 },
+  { x: 5, z: 10, model: 'tile-corner-round', rot: 2 },
+  { x: 5, z: 9, model: 'tile-straight', rot: 0 },
+  { x: 5, z: 8, model: 'tile-corner-round', rot: 3 },
+  { x: 4, z: 8, model: 'tile-straight', rot: 1 },
+  { x: 3, z: 8, model: 'tile-straight', rot: 1 },
+  { x: 2, z: 8, model: 'tile-straight', rot: 1 },
+  { x: 1, z: 8, model: 'tile-corner-round', rot: 1 },
+  { x: 1, z: 7, model: 'tile-straight', rot: 0 },
+  { x: 1, z: 6, model: 'tile-river-bridge', rot: 0 },
+  { x: 1, z: 5, model: 'tile-straight', rot: 0 },
+  { x: 1, z: 4, model: 'tile-corner-round', rot: 0 },
+  { x: 2, z: 4, model: 'tile-corner-round', rot: 2 },
+  { x: 2, z: 3, model: 'tile-straight', rot: 0 },
+  { x: 2, z: 2, model: 'tile-corner-round', rot: 0 },
+  { x: 3, z: 2, model: 'tile-corner-round', rot: 2 },
+  { x: 3, z: 1, model: 'tile-end', rot: 0 },
+]
+
 const MEADOW_PAINT: PaintCell[] = [
-  { x: 0, z: 10, model: 'tile-tree', kind: 'block' },
-  { x: 2, z: 10, model: 'tile-tree-double', kind: 'block' },
-  { x: 4, z: 10, model: 'tile-rock', kind: 'block' },
-  { x: 5, z: 10, model: 'tile-hill', kind: 'block' },
+  { x: 0, z: 13, model: 'tile-tree', kind: 'block' },
+  { x: 2, z: 13, model: 'tile-tree-double', kind: 'block' },
+  { x: 3, z: 13, model: 'tile-rock', kind: 'block' },
+  { x: 4, z: 13, model: 'tile-hill', kind: 'block' },
+  { x: 5, z: 13, model: 'tile-tree', kind: 'block' },
+  { x: 6, z: 13, model: 'tile-tree-double', kind: 'block' },
+  { x: 0, z: 12, model: 'tile-rock', kind: 'block' },
+  { x: 6, z: 12, model: 'tile-tree', kind: 'block' },
+  { x: 0, z: 11, model: 'tile-rock', kind: 'block' },
+  { x: 6, z: 11, model: 'tile-crystal', kind: 'block' },
+  { x: 0, z: 10, model: 'tile-hill', kind: 'block' },
   { x: 6, z: 10, model: 'tile-tree', kind: 'block' },
-  { x: 0, z: 9, model: 'tile-rock', kind: 'block' },
-  { x: 3, z: 9, model: 'tile-dirt', kind: 'build' },
-  { x: 6, z: 9, model: 'tile-crystal', kind: 'block' },
-  { x: 0, z: 8, model: 'tile-hill', kind: 'block' },
-  { x: 6, z: 8, model: 'tile-tree-double', kind: 'block' },
+  { x: 0, z: 9, model: 'tile-tree', kind: 'block' },
+  { x: 6, z: 9, model: 'tile-rock', kind: 'block' },
+  { x: 0, z: 8, model: 'tile-tree-double', kind: 'block' },
+  { x: 6, z: 8, model: 'tile-hill', kind: 'block' },
   { x: 0, z: 7, model: 'tile-tree', kind: 'block' },
-  { x: 1, z: 7, model: 'tile-rock', kind: 'block' },
+  { x: 2, z: 7, model: 'tile-dirt', kind: 'build' },
+  { x: 3, z: 7, model: 'tile-dirt', kind: 'build' },
+  { x: 5, z: 7, model: 'tile-dirt', kind: 'build' },
   { x: 6, z: 7, model: 'tile-crystal', kind: 'block' },
-  { x: 0, z: 6, model: 'tile-tree-double', kind: 'block' },
-  { x: 6, z: 6, model: 'tile-hill', kind: 'block' },
-  { x: 0, z: 5, model: 'tile-river-straight', rot: 1, kind: 'block' },
-  { x: 1, z: 5, model: 'tile-river-straight', rot: 1, kind: 'block' },
-  { x: 3, z: 5, model: 'tile-river-straight', rot: 1, kind: 'block' },
-  { x: 4, z: 5, model: 'tile-river-straight', rot: 1, kind: 'block' },
-  { x: 5, z: 5, model: 'tile-river-straight', rot: 1, kind: 'block' },
-  { x: 6, z: 5, model: 'tile-river-straight', rot: 1, kind: 'block' },
-  { x: 0, z: 4, model: 'tile-tree', kind: 'block' },
-  { x: 1, z: 4, model: 'tile-dirt', kind: 'build' },
+  { x: 0, z: 6, model: 'tile-river-straight', rot: 1, kind: 'block' },
+  { x: 2, z: 6, model: 'tile-river-straight', rot: 1, kind: 'block' },
+  { x: 3, z: 6, model: 'tile-river-straight', rot: 1, kind: 'block' },
+  { x: 4, z: 6, model: 'tile-river-straight', rot: 1, kind: 'block' },
+  { x: 5, z: 6, model: 'tile-river-straight', rot: 1, kind: 'block' },
+  { x: 6, z: 6, model: 'tile-river-straight', rot: 1, kind: 'block' },
+  { x: 0, z: 5, model: 'tile-tree', kind: 'block' },
+  { x: 6, z: 5, model: 'tile-tree-double', kind: 'block' },
+  { x: 0, z: 4, model: 'tile-hill', kind: 'block' },
+  { x: 3, z: 4, model: 'tile-dirt', kind: 'build' },
   { x: 6, z: 4, model: 'tile-rock', kind: 'block' },
   { x: 0, z: 3, model: 'tile-crystal', kind: 'block' },
   { x: 6, z: 3, model: 'tile-tree', kind: 'block' },
-  { x: 0, z: 2, model: 'tile-hill', kind: 'block' },
-  { x: 3, z: 2, model: 'tile-dirt', kind: 'build' },
-  { x: 6, z: 2, model: 'tile-tree-double', kind: 'block' },
-  { x: 0, z: 1, model: 'tile-tree', kind: 'block' },
-  { x: 6, z: 1, model: 'tile-rock', kind: 'block' },
+  { x: 0, z: 2, model: 'tile-tree', kind: 'block' },
+  { x: 4, z: 2, model: 'tile-dirt', kind: 'build' },
+  { x: 6, z: 2, model: 'tile-hill', kind: 'block' },
+  { x: 0, z: 1, model: 'tile-rock', kind: 'block' },
+  { x: 6, z: 1, model: 'tile-tree', kind: 'block' },
   { x: 0, z: 0, model: 'tile-tree-double', kind: 'block' },
   { x: 1, z: 0, model: 'tile', kind: 'pen' },
   { x: 2, z: 0, model: 'tile', kind: 'pen' },
+  { x: 3, z: 0, model: 'tile', kind: 'pen' },
   { x: 4, z: 0, model: 'tile', kind: 'pen' },
-  { x: 5, z: 0, model: 'tile-hill', kind: 'block' },
+  { x: 5, z: 0, model: 'tile', kind: 'pen' },
   { x: 6, z: 0, model: 'tile-tree', kind: 'block' },
 ]
 
-/** Meadow only. Faster, denser, lighter. Levels 2 and 3 keep their own tables. */
+/** Meadow only. A stream, not a single crawler. Levels 2 and 3 keep their tables. */
 const MEADOW_WAVES: WaveDef[] = [
-  { groups: [{ kind: 'scout', count: 6, interval: 1.7 }] },
+  { groups: [{ kind: 'scout', count: 7, interval: 0.7 }] },
   {
     groups: [
-      { kind: 'scout', count: 4, interval: 2.2 },
-      { kind: 'swarm', count: 5, interval: 2.0 },
-      { kind: 'scout', count: 4, interval: 2.2 },
+      { kind: 'scout', count: 6, interval: 0.65 },
+      { kind: 'swarm', count: 4, interval: 0.5 },
     ],
   },
   {
     groups: [
-      { kind: 'swarm', count: 4, interval: 2.1 },
-      { kind: 'tank', count: 2, interval: 3.6 },
-      { kind: 'swarm', count: 4, interval: 2.1 },
+      { kind: 'swarm', count: 6, interval: 0.48 },
+      { kind: 'scout', count: 4, interval: 0.55 },
+      { kind: 'tank', count: 1, interval: 0.3 },
     ],
   },
   {
     groups: [
-      { kind: 'shield', count: 3, interval: 2.6 },
-      { kind: 'scout', count: 5, interval: 2.2 },
-      { kind: 'swarm', count: 3, interval: 2.2 },
+      { kind: 'scout', count: 5, interval: 0.55 },
+      { kind: 'swarm', count: 6, interval: 0.42 },
+      { kind: 'shield', count: 2, interval: 0.7 },
+      { kind: 'scout', count: 1, interval: 0.2, entry: 0.93, hpMul: 0.55 },
     ],
   },
   {
     groups: [
-      { kind: 'tank', count: 1, interval: 0.2, entry: 0.93, hpMul: 2.2 },
-      { kind: 'tank', count: 2, interval: 3.4 },
-      { kind: 'swarm', count: 4, interval: 2.3 },
-      { kind: 'scout', count: 3, interval: 2.2 },
+      { kind: 'tank', count: 2, interval: 1.2 },
+      { kind: 'swarm', count: 8, interval: 0.4 },
+      { kind: 'scout', count: 5, interval: 0.5 },
     ],
   },
   {
     groups: [
-      { kind: 'shield', count: 3, interval: 2.6 },
-      { kind: 'swarm', count: 4, interval: 2.2 },
-      { kind: 'scout', count: 4, interval: 2.2 },
+      { kind: 'shield', count: 3, interval: 0.75 },
+      { kind: 'swarm', count: 8, interval: 0.38 },
+      { kind: 'scout', count: 6, interval: 0.48 },
     ],
   },
   {
     groups: [
-      { kind: 'tank', count: 3, interval: 3.4 },
-      { kind: 'scout', count: 4, interval: 2.4 },
-      { kind: 'swarm', count: 3, interval: 2.2 },
+      { kind: 'tank', count: 2, interval: 1.15 },
+      { kind: 'scout', count: 6, interval: 0.48 },
+      { kind: 'swarm', count: 7, interval: 0.38 },
     ],
   },
   {
     groups: [
-      { kind: 'shield', count: 3, interval: 2.5 },
-      { kind: 'swarm', count: 4, interval: 2.2 },
-      { kind: 'tank', count: 2, interval: 3.2 },
+      { kind: 'shield', count: 3, interval: 0.7 },
+      { kind: 'swarm', count: 8, interval: 0.36 },
+      { kind: 'tank', count: 2, interval: 1.1 },
     ],
   },
   {
     groups: [
-      { kind: 'boss', count: 1, interval: 0.2, hpMul: 1.55 },
-      { kind: 'swarm', count: 3, interval: 2.4 },
-      { kind: 'tank', count: 1, interval: 2.4 },
-      { kind: 'shield', count: 2, interval: 2.6 },
-      { kind: 'tank', count: 1, interval: 0.2, entry: 0.99, hpMul: 3.2, delay: 36 },
+      { kind: 'boss', count: 1, interval: 0.3, hpMul: 1.45 },
+      { kind: 'swarm', count: 6, interval: 0.42 },
+      { kind: 'shield', count: 2, interval: 0.7 },
+      { kind: 'scout', count: 4, interval: 0.45 },
+      { kind: 'tank', count: 1, interval: 0.3, entry: 0.78, hpMul: 2.8 },
     ],
   },
 ]
 
 const MEADOW_PETS: PetSpot[] = [
-  { model: 'animal-cat', x: 2.42, z: 0.42, scale: 0.62 },
-  { model: 'animal-bunny', x: 3.55, z: 0.38, scale: 0.58 },
-  { model: 'animal-dog', x: 1.72, z: 0.28, scale: 0.62 },
-  { model: 'animal-fox', x: 4.22, z: 0.26, scale: 0.58 },
-  { model: 'animal-chick', x: 3.02, z: 0.12, scale: 0.5 },
+  { model: 'animal-dog', x: 1.65, z: 1.42, scale: 0.62 },
+  { model: 'animal-cat', x: 2.35, z: 1.22, scale: 0.62 },
+  { model: 'animal-chick', x: 4.15, z: 1.18, scale: 0.5 },
+  { model: 'animal-bunny', x: 4.85, z: 1.48, scale: 0.58 },
+  { model: 'animal-fox', x: 5.2, z: 1.12, scale: 0.58 },
 ]
 
 function riverRow(model: string, bridgeX: number): PaintCell[] {
@@ -206,9 +244,11 @@ export const LEVELS: LevelDef[] = [
     name: 'Meadow',
     blurb: 'The first pen',
     biome: 'grass',
-    path: PATH,
+    path: MEADOW_PATH,
     paint: MEADOW_PAINT,
     hint: HINT_CELL,
+    cols: 7,
+    rows: 14,
     pads: [
       [2, 7],
       [3, 7],

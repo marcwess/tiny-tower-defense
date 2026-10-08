@@ -47,8 +47,7 @@ export function markTutorial(): void {
 export function loadSettings(): Settings {
   const muted = localStorage.getItem('tiny-td-muted') === '1'
   const storedDamage = localStorage.getItem('tiny-td-dmg')
-  const coarse = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches
-  const damage = storedDamage == null ? !coarse : storedDamage !== '0'
+  const damage = storedDamage == null ? true : storedDamage !== '0'
   const base: Settings = {
     sound: !muted,
     music: !muted,

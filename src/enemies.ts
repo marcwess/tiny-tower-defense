@@ -17,6 +17,14 @@ const bubbleMat = new THREE.MeshBasicMaterial({
   depthWrite: false,
 })
 const barBgMat = new THREE.MeshBasicMaterial({ color: 0x1b2430, depthTest: false })
+const frostGeo = new THREE.RingGeometry(0.32, 0.58, 24)
+const frostMat = new THREE.MeshBasicMaterial({
+  color: 0xd9f6ff,
+  transparent: true,
+  opacity: 0.92,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+})
 let blobMat: THREE.MeshBasicMaterial | null = null
 let heartMat: THREE.SpriteMaterial | null = null
 
@@ -77,6 +85,7 @@ export class Enemy {
   private readonly barFgMat: THREE.MeshBasicMaterial
   private readonly shieldFg: THREE.Mesh | null
   private readonly bubble: THREE.Mesh | null
+  private readonly frostRing: THREE.Mesh
   private bob: number
   private readonly baseY: number
   private visual: number
@@ -155,6 +164,13 @@ export class Enemy {
     this.badge.renderOrder = 8
     this.badge.visible = false
     this.group.add(this.badge)
+    this.frostRing = new THREE.Mesh(frostGeo, frostMat)
+    this.frostRing.rotation.x = -Math.PI / 2
+    this.frostRing.position.y = -def.hover + 0.2
+    this.frostRing.visible = false
+    this.frostRing.castShadow = false
+    this.frostRing.renderOrder = 3
+    this.group.add(this.frostRing)
     this.syncBar()
   }
 
@@ -179,7 +195,9 @@ export class Enemy {
     this.segT = 0
     this.slowTimer = 0
     this.slowFactor = 1
+    this.frostRing.visible = false
     this.flash = 0
+    this.applyFlash()
     this.wobble = 0
     this.badge.visible = false
     this.group.visible = true
@@ -330,16 +348,19 @@ export class Enemy {
   }
 
   private applyFlash(): void {
+    const frosted = this.slowTimer > 0
+    const tint = ENEMIES[this.kind].tint
     this.model.traverse((obj) => {
       const mesh = obj as THREE.Mesh
       if (!mesh.isMesh) return
       const mat = mesh.material as THREE.MeshLambertMaterial
-      if (mat.emissive) {
-        const frosted = this.slowTimer > 0
-        mat.emissive.set(frosted ? 0x6eb6ff : 0xfff4ea)
-        mat.emissiveIntensity = frosted ? 0.9 : this.flash > 0 ? 1.35 : 0
-      }
+      if (!mat.emissive) return
+      mat.color.set(frosted ? 0x8ecfff : tint)
+      mat.emissive.set(frosted ? 0xeaf7ff : 0xfff4ea)
+      mat.emissiveIntensity = frosted ? 2.1 : this.flash > 0 ? 1.35 : 0
     })
+    this.frostRing.visible = frosted
+    if (frosted) this.frostRing.scale.setScalar(1 + Math.sin(this.slowTimer * 18) * 0.16)
     const pulse = 1 + (this.flash > 0 ? this.flash * 1.6 : 0)
     this.model.scale.setScalar(this.visual * pulse)
   }

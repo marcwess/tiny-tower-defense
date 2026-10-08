@@ -33,9 +33,11 @@ export function cellKey(x: number, z: number): string {
 export function buildMap(level: LevelDef = levelById(1)): BuiltMap {
   validatePath(level.path)
   const ground = level.biome === 'snow' ? 'snow-tile' : 'tile'
+  const cols = level.cols ?? COLS
+  const rows = level.rows ?? ROWS
   const cells = new Map<string, MapCell>()
-  for (let z = 0; z < ROWS; z++) {
-    for (let x = 0; x < COLS; x++) {
+  for (let z = 0; z < rows; z++) {
+    for (let x = 0; x < cols; x++) {
       cells.set(cellKey(x, z), { x, z, model: ground, rot: 0, kind: 'build' })
     }
   }
@@ -88,7 +90,7 @@ export function buildMap(level: LevelDef = levelById(1)): BuiltMap {
     picks.push(pick)
   }
 
-  group.add(makeIsland(level.biome))
+  group.add(makeIsland(level.biome, cols, rows))
   if (level.biome === 'snow') {
     const bridge = level.path.find((tile) => tile.model.includes('bridge'))
     group.add(makeIceRibbon(bridge?.x ?? 2, waterMaps))
@@ -367,38 +369,40 @@ function makeIceRibbon(bridgeX: number, bucket: THREE.Texture[]): THREE.Group {
   return group
 }
 
-function makeIsland(biome: 'grass' | 'snow'): THREE.Group {
+function makeIsland(biome: 'grass' | 'snow', cols = COLS, rows = ROWS): THREE.Group {
   const group = new THREE.Group()
   const dirt = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0xeef3f8 : 0xb57a45 })
   const rock = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0xc5d0dc : 0x7d6558 })
   const soil = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0x8ea0b4 : 0x5c4336 })
-  const slab = new THREE.Mesh(new THREE.BoxGeometry(7.85, 0.62, 11.85), dirt)
-  slab.position.set(3, -0.32, 5)
+  const cx = (cols - 1) / 2
+  const cz = (rows - 1) / 2
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(cols + 0.85, 0.62, rows + 0.85), dirt)
+  slab.position.set(cx, -0.32, cz)
   slab.castShadow = true
   slab.receiveShadow = true
-  const crust = new THREE.Mesh(new THREE.BoxGeometry(7.35, 0.42, 11.25), rock)
-  crust.position.set(3, -0.78, 5)
+  const crust = new THREE.Mesh(new THREE.BoxGeometry(cols + 0.35, 0.42, rows + 0.25), rock)
+  crust.position.set(cx, -0.78, cz)
   crust.castShadow = true
   crust.receiveShadow = true
-  const keel = new THREE.Mesh(new THREE.BoxGeometry(6.3, 0.5, 9.7), soil)
-  keel.position.set(3, -1.15, 5)
+  const keel = new THREE.Mesh(new THREE.BoxGeometry(cols - 0.7, 0.5, rows - 1.3), soil)
+  keel.position.set(cx, -1.15, cz)
   keel.castShadow = true
   group.add(slab, crust, keel)
 
   const catcher = new THREE.Mesh(
-    new THREE.CircleGeometry(11.5, 48),
+    new THREE.CircleGeometry(Math.max(cols, rows) + 0.5, 48),
     new THREE.ShadowMaterial({ opacity: 0.34 }),
   )
   catcher.rotation.x = -Math.PI / 2
-  catcher.position.set(3, -1.55, 5)
+  catcher.position.set(cx, -1.55, cz)
   catcher.receiveShadow = true
   group.add(catcher)
 
   const rocks: Array<[number, number, number, number]> = [
     [-0.55, -0.15, -0.35, 0.7],
-    [6.55, -0.2, 10.4, 0.85],
-    [-0.4, -0.1, 10.2, 0.55],
-    [6.6, -0.18, -0.2, 0.62],
+    [cols - 0.45, -0.2, rows - 0.6, 0.85],
+    [-0.4, -0.1, rows - 0.8, 0.55],
+    [cols - 0.4, -0.18, -0.2, 0.62],
   ]
   for (const [x, y, z, s] of rocks) {
     const rockName = biome === 'snow' ? (s > 0.7 ? 'snow-tile-rock' : 'snow-tile-hill') : s > 0.7 ? 'tile-rock' : 'tile-hill'

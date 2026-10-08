@@ -220,6 +220,11 @@ export class Fx {
     this.playFlash(x, y, z, color, 0.28, 1.25)
   }
 
+  /** Boss death. Same flash pool, a longer wider pop. */
+  boomBig(x: number, y: number, z: number, color: number): void {
+    this.playFlash(x, y, z, color, 0.45, 2.4)
+  }
+
   private playFlash(x: number, y: number, z: number, color: number, life: number, grow: number): void {
     const slot = this.flashes[this.flashCursor % this.flashes.length]
     this.flashCursor += 1
@@ -386,7 +391,7 @@ export class Fx {
     if (mat.map !== tex) mat.map = tex
     mat.opacity = 1
     slot.sprite.position.set(x, y, z)
-    const worldH = text.length > 6 ? 0.46 : 0.36
+    const worldH = text.length > 6 ? 0.5 : 0.4
     slot.sprite.scale.set(worldH * (POP_W / POP_H) * 0.42, worldH, 1)
     slot.sprite.visible = true
     slot.life = life

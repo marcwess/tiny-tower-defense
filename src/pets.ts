@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { spawnPet, type PetInstance } from './assets'
+import { heartTexture, spawnPet, type PetInstance } from './assets'
 
 export interface PetSpot {
   model: string
@@ -16,9 +16,25 @@ export const PET_SPOTS: PetSpot[] = [
   { model: 'animal-chick', x: 3.02, z: 0.12, scale: 0.26 },
 ]
 
+let petHeart: THREE.SpriteMaterial | null = null
+
+function petHeartMat(): THREE.SpriteMaterial {
+  if (!petHeart) {
+    petHeart = new THREE.SpriteMaterial({
+      map: heartTexture(),
+      transparent: true,
+      depthWrite: false,
+      alphaTest: 0.35,
+      toneMapped: false,
+    })
+  }
+  return petHeart
+}
+
 export class Pet {
   readonly home = new THREE.Vector3()
   readonly group = new THREE.Group()
+  readonly badge: THREE.Sprite
   alive = true
   reserved = false
   private instance: PetInstance
@@ -33,6 +49,13 @@ export class Pet {
     this.instance.root.scale.setScalar(spot.scale)
     this.instance.root.position.y = this.instance.foot * spot.scale
     this.group.add(this.instance.root)
+    this.badge = new THREE.Sprite(petHeartMat())
+    this.badge.center.set(0.5, 0)
+    this.badge.scale.set(0.36, 0.36, 1)
+    this.badge.position.y = 1.15
+    this.badge.renderOrder = 8
+    this.badge.visible = false
+    this.group.add(this.badge)
     this.group.position.copy(this.home)
     this.group.rotation.y = 0.15 + Math.random() * 0.4
   }
@@ -40,6 +63,7 @@ export class Pet {
   update(dt: number): void {
     this.clock += dt
     this.instance.mixer.update(dt)
+    this.badge.visible = this.mode === 'ride' || this.mode === 'fall'
     if (this.mode === 'ride') return
     if (this.mode === 'fall') {
       this.group.position.y = Math.max(0, this.group.position.y - dt * 2.4)

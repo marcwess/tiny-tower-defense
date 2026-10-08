@@ -145,10 +145,12 @@ export class Hud {
   private nextEl: HTMLButtonElement
   private levelsBtn: HTMLButtonElement
   private titleSig = ''
+  private flashEl: HTMLElement
 
   constructor(app: HTMLElement) {
     app.innerHTML = `
       <div id="hud">
+        <div id="screen-flash"></div>
         <header id="top">
           <div class="pill gold" id="gold"><img alt="" src="${asset('assets/icons/coin.png')}" /><span>0</span></div>
           <div class="pill wave" id="wave"><img alt="" src="${asset('assets/icons/flag.png')}" /><span>1/9</span></div>
@@ -250,6 +252,7 @@ export class Hud {
     this.muteEl = this.root.querySelector('#mute') as HTMLButtonElement | null
     this.muteIcon = this.root.querySelector('#mute img') as HTMLImageElement | null
     this.radialEl = this.need('#radial')
+    this.flashEl = this.need('#screen-flash')
     this.handEl = this.need('#hand')
     this.handLine = this.need('#hand-line')
     this.pauseEl = this.need('#pause-menu')
@@ -417,6 +420,12 @@ export class Hud {
       coin.style.opacity = '0'
     }
     void anim.finished.then(finish, finish)
+  }
+
+  flashScreen(): void {
+    this.flashEl.classList.remove('on')
+    void this.flashEl.offsetWidth
+    this.flashEl.classList.add('on')
   }
 
   flashGold(): void {

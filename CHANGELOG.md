@@ -4,12 +4,12 @@ One level, built to feel good in the hand. Levels 2 and 3 stay loadable and show
 
 ## Feel
 
-- Portrait looks down the grass at about 89°, with the path running vertically, so the board fills the gap between the HUD and the bottom bar. At 390×844 that coverage is about 86% of the gap and a scout is about 40 CSS px wide. Wide screens turn the path sideways and still show the whole route and the pen.
+- Meadow is a 7×14 board seen from about 58° with a 32° lens, so towers and trees read in 3/4. Portrait looks up the path. Wide screens turn the path sideways. At 390×844 the grass covers about 82% of the gap between the HUD and the bottom bar, and the pen sits above the wave button.
 - The build menu is a ring of 64px circles (Turret, Cannon, Frost, Ballista) with a coin pill under each. Upgrade and sell use the same ring. The ring clamps inside the safe area, and a choice you cannot afford is grey.
-- Damage and gold numbers stay on the UFO, in world space, with a dark outline.
-- A shot kicks the barrel and flashes at the muzzle. Cannon and ballista leave a trail. A kill pops a colored burst, debris, and a coin that flies to the gold pill. Shake is capped and only plays for cannon impacts, boss hits, and abductions. A frost hit tints the UFO blue.
-- Pause is a yellow rounded button with two drawn bars. The tutorial hand points at a pad that is on screen, and Skip is a real button.
-- Waves are fewer, larger, and spaced. They auto-advance after a short countdown. Calling early pays gold. The bottom bar is the 1×/2× toggle, one wave button with a countdown ring, and icon chips for the next group. A light defense peaks around 16–18 UFOs; an empty field peaks at 25.
+- Hits print a small outlined number, throttled so a stream of shots does not flood the screen. "Effective!" shows only every few seconds.
+- A shot kicks the barrel and flashes at the muzzle. Cannon and ballista leave a trail. A kill pops a colored burst, debris, and a coin that flies to the gold pill. A frost hit turns the UFO icy blue and plants a frost ring. Shake is short and capped, and a boss death adds a screen flash and a bigger burst.
+- Pause is a yellow rounded button with two drawn bars. The tutorial hand hides while a ring is open, then points at Call wave, and ends when the wave starts or Skip is pressed. Hearts float over a pet only while it is being carried or dropped.
+- Wave 1 is a stream of scouts. Later waves mix and overlap. The next countdown starts when the last UFO of a wave has spawned. Calling early pays gold. The bottom bar is the 1×/2× toggle, one wave button with a countdown ring, and icon chips for the next group.
 
 ## Performance
 

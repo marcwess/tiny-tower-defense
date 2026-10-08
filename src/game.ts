@@ -88,7 +88,6 @@ interface WaveRow {
 type Phase = 'title' | 'ready' | 'wave' | 'breather' | 'victory' | 'defeat'
 type Tier = 'low' | 'mid' | 'high'
 
-const HAND = ['', 'Tap', 'Turret', 'Go', 'Tap', 'Upgrade']
 const SPEED_KEY = 'tiny-td-speed'
 
 const _v = new THREE.Vector3()
@@ -226,6 +225,7 @@ export class Game {
   private bannerChips: WaveChip[] | null = null
   private bannerT = 0
   private effectiveAt = new Map<number, number>()
+  private damageAt = new Map<number, number>()
   private lastEffective = -10
   private lastEffX = 0
   private lastEffZ = 0
@@ -625,9 +625,8 @@ export class Game {
   }
 
   /**
-   * Meadow is framed on the grass, not the plinth. A 60° tilt still leaves a
-   * tall phone half sky, so portrait looks down at 89° with the path running
-   * vertically, and wide screens turn the path sideways at 72°.
+   * Meadow is a tall board seen from a 3/4 angle. Portrait looks up the path.
+   * Wide screens turn that path sideways so the long axis fits the width.
    */
   private framing(): {
     fov: number
@@ -643,8 +642,8 @@ export class Game {
     const meadow = this.level?.id === 1
     const pose = meadow
       ? aspect < 1
-        ? { fov: 22, pitch: 1.553, azimuth: Math.PI, lookY: 0.02 }
-        : { fov: 30, pitch: 1.257, azimuth: Math.PI / 2, lookY: 0.02 }
+        ? { fov: 32, pitch: 1.012, azimuth: Math.PI, lookY: 0.42 }
+        : { fov: 34, pitch: 1.03, azimuth: Math.PI / 2, lookY: 0.38 }
       : aspect < 0.62
         ? { fov: 42, pitch: 0.76, azimuth: 2.8, lookY: 0.35 }
         : aspect < 1.05
@@ -682,9 +681,11 @@ export class Game {
   /** Corners of the path, the spawn lead-in, and the pet pen. Not the plinth. */
   private framePoints(): THREE.Vector3[] {
     if (this.level?.id === 1) {
+      const cols = this.level.cols ?? 7
+      const rows = this.level.rows ?? 14
       const pts: THREE.Vector3[] = []
-      for (const x of [-0.15, 6.15]) {
-        for (const z of [0.05, 10.25]) pts.push(new THREE.Vector3(x, 0.15, z))
+      for (const x of [-0.18, cols - 1 + 0.18]) {
+        for (const z of [-0.02, rows - 1 + 0.22]) pts.push(new THREE.Vector3(x, 0.2, z))
       }
       return pts
     }
@@ -773,8 +774,8 @@ export class Game {
     let bestScore = Infinity
     for (let ox = -reach; ox <= reach + 1e-6; ox += step) {
       for (let oz = -reach; oz <= reach + 1e-6; oz += step) {
-        const tx = THREE.MathUtils.clamp(cx + ox, 0.45, 5.55)
-        const tz = THREE.MathUtils.clamp(cz + oz, 0.45, 9.2)
+        const tx = THREE.MathUtils.clamp(cx + ox, 0.45, meadow ? 5.7 : 5.55)
+        const tz = THREE.MathUtils.clamp(cz + oz, 0.4, meadow ? 11.4 : 9.2)
         let lo = meadow ? 8 : 7
         let hi = meadow ? 58 : 40
         for (let i = 0; i < (meadow ? 12 : 11); i++) {
@@ -807,12 +808,12 @@ export class Game {
         bestX = THREE.MathUtils.clamp(
           bestX + Math.cos(pose.azimuth) * errX * k + Math.sin(pose.azimuth) * errY * k,
           0.45,
-          5.55,
+          5.7,
         )
         bestZ = THREE.MathUtils.clamp(
           bestZ - Math.sin(pose.azimuth) * errX * k + Math.cos(pose.azimuth) * errY * k,
-          0.45,
-          9.2,
+          0.4,
+          11.4,
         )
         let lo = 8
         let hi = 58
@@ -908,9 +909,11 @@ export class Game {
   }
 
   private clampCamera(): void {
-    this.target.x = THREE.MathUtils.clamp(this.target.x, 0.2, 5.8)
-    this.target.z = THREE.MathUtils.clamp(this.target.z, 0.2, 9.8)
-    this.distance = THREE.MathUtils.clamp(this.distance, 4.2, 64)
+    const cols = this.level?.cols ?? 7
+    const rows = this.level?.rows ?? 11
+    this.target.x = THREE.MathUtils.clamp(this.target.x, 0.2, Math.max(5.8, cols - 1.2))
+    this.target.z = THREE.MathUtils.clamp(this.target.z, 0.2, Math.max(9.8, rows - 1.2))
+    this.distance = THREE.MathUtils.clamp(this.distance, 4.2, 72)
   }
 
   private updateCamera(): void {
@@ -920,7 +923,7 @@ export class Game {
       return
     }
     const horiz = Math.cos(this.pitch) * this.distance
-    const kick = Math.min(0.06, this.shake)
+    const kick = Math.min(0.11, this.shake)
     const bob = Math.sin(this.time * 18) * kick
     const orbit = this.phase === 'title' && !this.userCam ? this.titleSpin : 0
     const azimuth = this.azimuth + orbit
@@ -1086,7 +1089,7 @@ export class Game {
 
   private tick(dt: number): void {
     this.time += dt
-    this.shake = Math.max(0, this.shake - dt * 2.4)
+    this.shake = Math.max(0, this.shake - dt * 3.2)
     if (this.bannerT > 0) {
       this.bannerT = Math.max(0, this.bannerT - dt)
       if (this.bannerT === 0) {
@@ -1098,7 +1101,7 @@ export class Game {
     if (this.phase === 'wave') this.updateSpawns(dt)
     if (this.phase === 'ready' && this.level.id === 1 && (this.tutorStep === 0 || this.tutorStep >= 3)) {
       if (this.countdown <= 0) {
-        this.countdownFull = this.tutorStep >= 3 ? 2.6 : 3.6
+        this.countdownFull = 4
         this.countdown = this.countdownFull
       }
       this.countdown -= dt
@@ -1157,7 +1160,8 @@ export class Game {
 
   private spawnEnemy(kind: EnemyKind, hpMul = 1, entry = 0): Enemy {
     const meadow = this.level.id === 1
-    const enemy = this.takeEnemy(kind, hpMul, meadow ? 1.06 : 1, meadow ? 1.9 : 1)
+    const speed = meadow ? (kind === 'scout' ? 1.32 : 1.08) : 1
+    const enemy = this.takeEnemy(kind, hpMul, speed, meadow ? 1.9 : 1)
     const points = this.map.points
     const max = Math.max(1, points.length - 1)
     const index = Math.min(max - 1, Math.floor(Math.max(0, entry) * max))
@@ -1193,7 +1197,7 @@ export class Game {
   private warmPools(): void {
     if (this.warmed) return
     this.warmed = true
-    const counts: Record<EnemyKind, number> = { scout: 16, swarm: 24, tank: 8, shield: 8, boss: 2 }
+    const counts: Record<EnemyKind, number> = { scout: 22, swarm: 26, tank: 8, shield: 8, boss: 2 }
     for (const kind of Object.keys(counts) as EnemyKind[]) {
       for (let i = 0; i < counts[kind]; i++) {
         const enemy = new Enemy(kind)
@@ -1249,6 +1253,8 @@ export class Game {
       enemy.group.position.set(2, 0.55, 6)
       reveal(enemy.group)
     }
+    const pet = this.pets[0]
+    if (pet) pet.badge.visible = true
     for (const mesh of this.warmupAmmo) {
       mesh.position.set(3, 0.4, 6)
       reveal(mesh)
@@ -1274,6 +1280,7 @@ export class Game {
         enemy.group.visible = false
         enemy.group.position.set(0, -20, 0)
       }
+      if (pet) pet.badge.visible = false
       for (const mesh of this.warmupAmmo) {
         mesh.visible = false
         mesh.position.set(0, -30, 0)
@@ -1357,7 +1364,7 @@ export class Game {
     enemy.abducting = true
     enemy.carrying = true
     const rig = this.takeRig()
-    enemy.badge.visible = true
+    enemy.badge.visible = false
     rig.enemy = enemy
     rig.pet = pet
     rig.phase = 'beam'
@@ -1367,7 +1374,7 @@ export class Game {
     this.carries.push(rig)
     this.abductions += 1
     audio.play('beam')
-    this.shake = Math.min(0.06, Math.max(this.shake, 0.04))
+    this.shake = Math.min(0.11, Math.max(this.shake, 0.05))
   }
 
   private updateCarries(dt: number): void {
@@ -1638,15 +1645,20 @@ export class Game {
     const effective = mod.effective || (hadShield && mod.shield >= 1.8)
     if (effective) this.popEffective(enemy)
     if (this.showDamage && amount >= 1) {
-      this.popText(enemy.pos.x, enemy.pos.y + 0.55, enemy.pos.z, String(Math.round(amount)), '#fff6ea', 0.7)
+      const last = this.damageAt.get(enemy.id) ?? -10
+      if (this.time - last >= 0.16) {
+        this.damageAt.set(enemy.id, this.time)
+        this.popText(enemy.pos.x, enemy.pos.y + 0.42, enemy.pos.z, String(Math.round(amount)), '#fff6ea', 0.62)
+      }
     }
-    if (enemy.kind === 'boss') this.shake = Math.min(0.06, Math.max(this.shake, 0.04))
+    if (enemy.kind === 'boss') this.shake = Math.min(0.11, Math.max(this.shake, 0.08))
     return { killed, effective }
   }
 
   private popEffective(enemy: Enemy): void {
     const last = this.effectiveAt.get(enemy.id) ?? -10
-    if (this.time - last < 0.55) return
+    if (this.time - this.lastEffective < 3.2) return
+    if (this.time - last < 3.2) return
     const near =
       this.time - this.lastEffective < 1.2 &&
       Math.hypot(enemy.pos.x - this.lastEffX, enemy.pos.z - this.lastEffZ) < 2.2
@@ -1685,7 +1697,7 @@ export class Game {
     this.fx.ring(origin.x, origin.z, 0xffb15a)
     this.fx.burst(origin.x, origin.y, origin.z, 0xffe08a, 10, 3.2)
     this.fx.puff(origin.x, origin.y, origin.z)
-    this.shake = Math.min(0.06, Math.max(this.shake, 0.03))
+    this.shake = Math.min(0.11, Math.max(this.shake, 0.07))
   }
 
   private pending: Enemy[] = []
@@ -1734,7 +1746,12 @@ export class Game {
     this.hud.flashGold()
     audio.play('boom')
     buzz('kill')
-    if (enemy.kind === 'boss') this.shake = Math.min(0.06, Math.max(this.shake, 0.05))
+    if (enemy.kind === 'boss') {
+      this.fx.boomBig(enemy.pos.x, enemy.pos.y + 0.55, enemy.pos.z, tint)
+      this.fx.burst(enemy.pos.x, enemy.pos.y + 0.4, enemy.pos.z, 0xffe7a0, 18, 4.6)
+      this.hud.flashScreen()
+      this.shake = Math.min(0.11, Math.max(this.shake, 0.1))
+    }
     const carry = this.carries.find((item) => item.enemy === enemy)
     if (carry) this.rescue(carry)
     this.removeEnemy(enemy)
@@ -1760,7 +1777,7 @@ export class Game {
       this.noteWave(cleared)
       this.waveIndex += 1
       this.phase = 'breather'
-      this.countdownFull = 4.5
+      this.countdownFull = 2.2
       this.countdown = this.countdownFull
       this.advanceTutor('breather')
       return
@@ -1819,7 +1836,7 @@ export class Game {
       this.gold += earlyBonus(this.waveIndex)
       this.advanceTutor('early')
     }
-    this.advanceTutor('wave')
+    this.finishTutor()
     this.bannerTitle = this.waveIndex === this.level.waves.length - 1 ? 'Boss wave' : `Wave ${this.waveIndex + 1}`
     this.bannerChips = waveChips(this.level.waves[this.waveIndex])
     this.bannerT = 2
@@ -1835,7 +1852,7 @@ export class Game {
         this.schedule.push({ time, kind: group.kind, entry: group.entry ?? 0, hpMul: group.hpMul ?? 1 })
         time += group.interval
       }
-      time += 0.4
+      time += this.level.id === 1 ? 0.15 : 0.4
     }
     audio.play('wave')
     this.refreshHud()
@@ -2213,25 +2230,16 @@ export class Game {
   }
 
   private handView(): HandView | null {
-    if (this.tutorStep < 1 || this.tutorStep > 5 || this.paused) return null
+    if (this.tutorStep < 1 || this.tutorStep > 3 || this.paused) return null
     if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') return null
-    const text = HAND[this.tutorStep] ?? ''
-    if (this.tutorStep === 1) {
+    if (this.selected) return null
+    if (this.tutorStep === 1 || this.tutorStep === 2) {
       const pad = this.coachPad()
       const point = this.projectWorld(pad.x, 0.7, pad.z)
       if (!point) return null
-      return { text, x: point.x, y: point.y, part: null }
+      return { text: this.tutorStep === 1 ? 'Tap' : 'Turret', x: point.x, y: point.y, part: null }
     }
-    if (this.tutorStep === 2) return { text, x: 0, y: 0, part: 'turret' }
-    if (this.tutorStep === 3) return { text, x: 0, y: 0, part: 'start' }
-    if (this.tutorStep === 4) {
-      const tower = this.towers[0]
-      if (!tower) return null
-      const point = this.projectWorld(tower.x, 0.8, tower.z)
-      if (!point) return null
-      return { text, x: point.x, y: point.y, part: null }
-    }
-    return { text, x: 0, y: 0, part: 'upgrade' }
+    return { text: 'Go', x: 0, y: 0, part: 'start' }
   }
 
   private projectWorld(x: number, y: number, z: number): { x: number; y: number } | null {
@@ -2338,7 +2346,7 @@ export class Game {
   }
 
   skipCoach(): void {
-    this.advanceTutor('next')
+    this.finishTutor()
     this.refreshHud()
   }
 
@@ -2359,6 +2367,7 @@ export class Game {
     this.abductions = 0
     this.waveLog = []
     this.effectiveAt.clear()
+    this.damageAt.clear()
     this.lastEffective = -10
     this.effectiveStack = 0
     this.bannerTitle = null
@@ -2444,6 +2453,13 @@ export class Game {
     this.pending = []
   }
 
+  private finishTutor(): void {
+    if (this.tutorStep <= 0) return
+    this.tutorStep = 0
+    markTutorial()
+    this.syncMarker()
+  }
+
   private advanceTutor(reason: 'base' | 'weapon' | 'wave' | 'rescue' | 'early' | 'next' | 'breather' | 'pad' | 'tower' | 'upgrade'): void {
     if (this.tutorStep <= 0) return
     const step = this.tutorStep
@@ -2457,13 +2473,10 @@ export class Game {
     if (!match) return
     this.tutorStep += 1
     if (this.tutorStep === 3) {
-      this.countdownFull = 2.6
+      this.countdownFull = 3.5
       this.countdown = this.countdownFull
     }
-    if (this.tutorStep > 5) {
-      this.tutorStep = 0
-      markTutorial()
-    }
+    if (this.tutorStep > 3) this.finishTutor()
     this.syncMarker()
   }
 
