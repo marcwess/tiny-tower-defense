@@ -20,6 +20,9 @@ export class Enemy {
   segT = 0
   alive = true
   abducting = false
+  fleeing = false
+  carrying = false
+  fleeSpeed = 0.46
   slowTimer = 0
   slowFactor = 1
   flash = 0
@@ -119,21 +122,22 @@ export class Enemy {
     return this.speed * this.slowFactor
   }
 
-  /** Move along the polyline. Returns true when the UFO reaches the pen. */
-  update(dt: number, points: XZ[], time: number): boolean {
+  /** Move along the polyline. `arrived` is the pen. `escaped` is the gate, pet and all. */
+  update(dt: number, points: XZ[], time: number): 'walk' | 'arrived' | 'escaped' {
     if (this.slowTimer > 0) this.slowTimer = Math.max(0, this.slowTimer - dt)
     if (this.flash > 0) this.flash = Math.max(0, this.flash - dt)
     this.bob += dt * (this.flying ? 2.8 : 3.6)
     if (this.abducting) {
       this.applyFlash()
       this.syncBar()
-      return false
+      return 'walk'
     }
+    if (this.fleeing) return this.retreat(dt, points, time)
     if (this.waypoint >= points.length - 1) {
       const end = points[points.length - 1]
       this.pos.set(end.x, this.baseY + Math.sin(this.bob) * 0.04, end.z)
       this.group.position.copy(this.pos)
-      return true
+      return 'arrived'
     }
 
     let left = this.currentSpeed() * dt
@@ -158,7 +162,7 @@ export class Enemy {
       this.vel.set(0, 0, 0)
       this.group.position.copy(this.pos)
       this.group.position.y += Math.sin(this.bob) * 0.04
-      return true
+      return 'arrived'
     }
 
     const a = points[this.waypoint]
@@ -179,12 +183,56 @@ export class Enemy {
       this.bubble.visible = pct > 0.02
       this.bubble.scale.setScalar(0.85 + pct * 0.25)
     }
-    return false
+    return 'walk'
+  }
+
+  private retreat(dt: number, points: XZ[], time: number): 'walk' | 'escaped' {
+    let left = this.fleeSpeed * (this.slowTimer > 0 ? this.slowFactor : 1) * dt
+    while (left > 0) {
+      if (this.segT <= 0.0001) {
+        if (this.waypoint <= 0) {
+          const start = points[0]
+          this.pos.set(start.x, this.baseY, start.z)
+          this.group.position.copy(this.pos)
+          return 'escaped'
+        }
+        this.waypoint -= 1
+        this.segT = 1
+      }
+      const a = points[this.waypoint]
+      const b = points[this.waypoint + 1]
+      const seg = Math.hypot(b.x - a.x, b.z - a.z) || 0.0001
+      const remain = this.segT * seg
+      if (left >= remain) {
+        left -= remain
+        this.segT = 0
+      } else {
+        this.segT -= left / seg
+        left = 0
+      }
+    }
+    const a = points[this.waypoint]
+    const b = points[Math.min(this.waypoint + 1, points.length - 1)]
+    const seg = Math.hypot(b.x - a.x, b.z - a.z) || 1
+    this.pos.set(a.x + (b.x - a.x) * this.segT, this.baseY, a.z + (b.z - a.z) * this.segT)
+    this.vel.set((a.x - b.x) / seg, 0, (a.z - b.z) / seg).multiplyScalar(this.fleeSpeed)
+    const bob = Math.sin(this.bob) * 0.08
+    this.group.position.set(this.pos.x, this.pos.y + bob, this.pos.z)
+    this.model.rotation.y = Math.atan2(this.vel.x, this.vel.z)
+    this.model.rotation.z = Math.sin(time * 2.4 + this.bob) * 0.08
+    this.applyFlash()
+    this.syncBar()
+    if (this.bubble) {
+      const pct = this.maxShield > 0 ? this.shield / this.maxShield : 0
+      this.bubble.visible = pct > 0.02
+      this.bubble.scale.setScalar(0.85 + pct * 0.25)
+    }
+    return 'walk'
   }
 
   /** Shield absorbs first. shieldMul above 1 breaks shields faster. */
   damage(amount: number, shieldMul: number): boolean {
-    this.flash = 0.1
+    this.flash = 0.18
     let left = amount
     if (this.shield > 0) {
       const toShield = Math.min(this.shield, left * shieldMul)
@@ -212,9 +260,12 @@ export class Enemy {
       const mesh = obj as THREE.Mesh
       if (!mesh.isMesh) return
       const mat = mesh.material as THREE.MeshLambertMaterial
-      if (mat.emissive) mat.emissiveIntensity = this.flash > 0 ? 1 : 0
+      if (mat.emissive) {
+        mat.emissive.set(0xfff4ea)
+        mat.emissiveIntensity = this.flash > 0 ? 1.35 : 0
+      }
     })
-    const pulse = 1 + (this.flash > 0 ? this.flash * 2.2 : 0)
+    const pulse = 1 + (this.flash > 0 ? this.flash * 1.6 : 0)
     this.model.scale.setScalar(this.scale * pulse)
   }
 

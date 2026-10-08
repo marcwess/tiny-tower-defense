@@ -34,6 +34,30 @@ function stopPreview() {
   }
 }
 
+function stateOf(page) {
+  return page.evaluate(() => window.__TINY_TD__?.getState())
+}
+
+async function overflowReport(page) {
+  return page.evaluate(() => {
+    const offenders = []
+    const nodes = document.querySelectorAll('#tray span, #preview span, #banner-chips span, #card-stats, #start, #count, #wave span')
+    for (const node of nodes) {
+      if (!(node instanceof HTMLElement)) continue
+      const style = getComputedStyle(node)
+      if (style.display === 'none' || style.visibility === 'hidden') continue
+      if (node.scrollWidth > node.clientWidth + 1) {
+        offenders.push({
+          text: node.textContent?.replace(/\s+/g, ' ').slice(0, 40) ?? '',
+          w: node.clientWidth,
+          sw: node.scrollWidth,
+        })
+      }
+    }
+    return offenders
+  })
+}
+
 async function clipTray(page) {
   return page.evaluate(() => {
     const buttons = [...document.querySelectorAll('#tray button')]
@@ -89,7 +113,7 @@ try {
     viewport: { width: 390, height: 844 },
     hasTouch: true,
     isMobile: true,
-    deviceScaleFactor: 2,
+    deviceScaleFactor: 1,
   })
   page.on('pageerror', (error) => {
     console.error('pageerror', error.message)
@@ -227,23 +251,213 @@ try {
     return { card: card && { x: card.x, y: card.y, r: card.right, b: card.bottom, w: card.width }, buttons }
   })
   console.log('panel320', JSON.stringify(boxes320))
+  const overflow320 = await overflowReport(page)
+  if (overflow320.length) throw new Error(`label overflow at 320: ${JSON.stringify(overflow320)}`)
   await page.screenshot({ path: `${OUT}/build_panel_320.png` })
   const labelClip320 = await clipTray(page)
   if (labelClip320.width < 8) throw new Error(`shop labels missing at 320: ${JSON.stringify(boxes320)}`)
   await page.screenshot({ path: `${OUT}/shop_labels_320.png`, clip: labelClip320 })
-  await page.setViewportSize({ width: 390, height: 844 })
-
+  await page.setViewportSize({ width: 320, height: 780 })
   await page.evaluate(() => {
     window.__TINY_TD__.retry()
-    window.__TINY_TD__.cameraFocus(3, 1.1, 9.2)
-    window.__TINY_TD__.debugAbduct()
+    window.__TINY_TD__.debugPreview()
+    window.__TINY_TD__.deselect()
   })
-  await delay(680)
+  await delay(200)
+  const preview320 = await page.locator('#preview').innerText()
+  if (!preview320.includes('Turret/Frost')) throw new Error(`preview missing chip at 320: ${preview320}`)
+  if (preview320.includes('\n') && /,\s*$/m.test(preview320)) {
+    throw new Error(`preview wrapped mid-phrase at 320: ${preview320}`)
+  }
+  const hud320 = await page.evaluate(() => {
+    const tops = ['#gold', '#wave', '#pets', '#mute'].map((sel) => {
+      const rect = document.querySelector(sel)?.getBoundingClientRect()
+      return rect ? Math.round(rect.top) : null
+    })
+    const wave = document.querySelector('#wave span')?.textContent ?? ''
+    const start = document.querySelector('#start')?.textContent ?? ''
+    const count = document.querySelector('#count')?.textContent ?? ''
+    const actions = document.querySelector('#actions')?.getBoundingClientRect()
+    return { tops, wave, start, count, actionsBottom: actions ? Math.round(actions.bottom) : null, height: window.innerHeight }
+  })
+  console.log('hud320', JSON.stringify(hud320))
+  if (hud320.tops.some((top) => top == null || Math.abs(top - hud320.tops[0]) > 6)) {
+    throw new Error(`HUD wrapped at 320: ${JSON.stringify(hud320)}`)
+  }
+  if (hud320.wave.includes('s') || hud320.wave.toLowerCase().includes('clear')) {
+    throw new Error(`wave pill is not fixed: ${hud320.wave}`)
+  }
+  if (!/^\d+s$/.test(hud320.count)) throw new Error(`countdown missing: ${hud320.count}`)
+  if (hud320.start.includes('s')) throw new Error(`call button still shows the timer: ${hud320.start}`)
+  if (hud320.actionsBottom == null || hud320.actionsBottom > hud320.height) {
+    throw new Error(`actions offscreen at 320: ${JSON.stringify(hud320)}`)
+  }
+  const previewOverflow = await overflowReport(page)
+  if (previewOverflow.length) throw new Error(`preview overflow at 320: ${JSON.stringify(previewOverflow)}`)
+  await page.screenshot({ path: `${OUT}/preview_320.png` })
+  await page.screenshot({ path: `${OUT}/hud_countdown_320.png` })
+
+  await page.setViewportSize({ width: 320, height: 568 })
+  await delay(200)
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.retry()
+    api.setTimeScale(0)
+    api.setGold(400)
+    api.buy(2, 7, 'base')
+    api.buy(2, 7, 'turret')
+    api.select(2, 7)
+  })
+  await delay(250)
+  const fit568 = await page.evaluate(() => {
+    const actions = document.querySelector('#actions')?.getBoundingClientRect()
+    const card = document.querySelector('#card')?.getBoundingClientRect()
+    const buttons = [...document.querySelectorAll('#tray button')].map((button) => {
+      const rect = button.getBoundingClientRect()
+      return { id: button.dataset.part, b: Math.round(rect.bottom), t: Math.round(rect.top) }
+    })
+    return {
+      height: window.innerHeight,
+      actionsBottom: actions ? Math.round(actions.bottom) : null,
+      cardBottom: card ? Math.round(card.bottom) : null,
+      fade: document.querySelector('#card')?.classList.contains('fade') ?? false,
+      buttons,
+    }
+  })
+  console.log('fit568', JSON.stringify(fit568))
+  if (fit568.actionsBottom == null || fit568.actionsBottom > fit568.height + 1) {
+    throw new Error(`build panel hides the call button at 320x568: ${JSON.stringify(fit568)}`)
+  }
+  const overflow568 = await overflowReport(page)
+  if (overflow568.length) throw new Error(`label overflow at 320x568: ${JSON.stringify(overflow568)}`)
+  await page.screenshot({ path: `${OUT}/build_panel_320x568.png` })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await delay(200)
+  await page.evaluate(() => {
+    window.__TINY_TD__.retry()
+    window.__TINY_TD__.debugPreview()
+    window.__TINY_TD__.deselect()
+  })
+  await delay(200)
+  const previewText = await page.locator('#preview').innerText()
+  if (!previewText.includes('Turret/Frost')) throw new Error(`preview missing chip: ${previewText}`)
+  await page.screenshot({ path: `${OUT}/preview_weak.png` })
+
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.retry()
+    api.debugPop()
+    api.deselect()
+    api.setTimeScale(0)
+  })
+  await delay(250)
+  await page.screenshot({ path: `${OUT}/portrait_matchup.png` })
+
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.retry()
+    api.setTimeScale(1)
+    api.debugAbduct()
+  })
+  await delay(420)
+  await page.evaluate(() => window.__TINY_TD__.setTimeScale(0))
+  const carryState = await stateOf(page)
+  console.log('carry', JSON.stringify(carryState))
+  if (!carryState?.carries) throw new Error('abduction did not start')
+  await page.screenshot({ path: `${OUT}/pet_carry.png` })
   await page.screenshot({ path: `${OUT}/pet_abduction.png` })
+  await page.evaluate(() => {
+    window.__TINY_TD__.setTimeScale(1)
+    window.__TINY_TD__.debugRescue()
+  })
+  await delay(220)
+  await page.evaluate(() => window.__TINY_TD__.setTimeScale(0))
+  await page.screenshot({ path: `${OUT}/pet_rescue.png` })
+
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.retry()
+    api.setTimeScale(0)
+    api.setGold(400)
+    api.buy(2, 7, 'base')
+    api.buy(2, 7, 'turret')
+    api.buy(2, 7, 'upgrade')
+    api.select(2, 7)
+  })
+  await delay(300)
+  const upgrade = await page.evaluate(() => {
+    const stats = document.querySelector('#card-stats')?.textContent ?? ''
+    const upgradeBtn = document.querySelector('[data-part="upgrade"] img.thumb')
+    const actions = document.querySelector('#actions')?.getBoundingClientRect()
+    const preview = document.querySelector('#preview')?.getBoundingClientRect()
+    const card = document.querySelector('#card')?.getBoundingClientRect()
+    return {
+      stats,
+      thumb: upgradeBtn instanceof HTMLImageElement ? upgradeBtn.src : '',
+      actionsTop: actions ? Math.round(actions.top) : null,
+      cardBottom: card ? Math.round(card.bottom) : null,
+      previewBottom: preview && preview.height > 2 ? Math.round(preview.bottom) : null,
+      height: window.innerHeight,
+    }
+  })
+  console.log('upgrade', JSON.stringify(upgrade))
+  if (!upgrade.stats.includes('●') || /tier/i.test(upgrade.stats)) {
+    throw new Error(`tier pips missing: ${upgrade.stats}`)
+  }
+  if (!upgrade.thumb.includes('star')) throw new Error(`upgrade thumb is not a star: ${upgrade.thumb}`)
+  if (upgrade.actionsTop == null || upgrade.cardBottom == null || upgrade.cardBottom > upgrade.actionsTop + 2) {
+    throw new Error(`upgrade card covers the call button: ${JSON.stringify(upgrade)}`)
+  }
+  await page.screenshot({ path: `${OUT}/upgrade_ui.png` })
+
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.retry()
+    api.setTimeScale(0)
+    api.debugBoss()
+    api.deselect()
+  })
+  await delay(250)
+  const banner = await page.evaluate(() => {
+    const node = document.querySelector('#banner')
+    const rect = node?.getBoundingClientRect()
+    const title = document.querySelector('#banner-title')?.textContent ?? ''
+    const chips = document.querySelectorAll('#banner-chips .bchip').length
+    return {
+      hidden: node instanceof HTMLElement ? node.hidden : true,
+      title,
+      chips,
+      top: rect ? Math.round(rect.top) : null,
+      height: rect ? Math.round(rect.height) : null,
+      bottom: rect ? Math.round(rect.bottom) : null,
+    }
+  })
+  console.log('banner', JSON.stringify(banner))
+  if (banner.hidden || banner.title !== 'Boss wave' || banner.chips < 3) {
+    throw new Error(`boss banner missing chips: ${JSON.stringify(banner)}`)
+  }
+  if (banner.bottom == null || banner.bottom > 220 || (banner.height ?? 999) > 150) {
+    throw new Error(`boss banner still covers the board: ${JSON.stringify(banner)}`)
+  }
+  await page.screenshot({ path: `${OUT}/boss_wave.png` })
 
   await page.evaluate(() => window.__TINY_TD__.debugWin())
   await delay(250)
+  const win = await page.evaluate(() => {
+    const banner = document.querySelector('#banner')
+    const icon = document.querySelector('#end-icon')
+    return {
+      bannerHidden: banner instanceof HTMLElement ? banner.hidden : true,
+      popups: document.querySelectorAll('.fly-coin').length,
+      icon: icon instanceof HTMLImageElement ? icon.src.slice(0, 32) : '',
+    }
+  })
+  console.log('win', JSON.stringify(win))
+  if (!win.bannerHidden) throw new Error('boss banner stayed up behind the win card')
+  if (!win.icon.startsWith('data:')) throw new Error(`win heart is still a flat icon: ${win.icon}`)
   await page.screenshot({ path: `${OUT}/win_screen.png` })
+  await page.screenshot({ path: `${OUT}/win_stars.png` })
 
   await page.evaluate(() => {
     window.__TINY_TD__.retry()
@@ -266,16 +480,20 @@ try {
 
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.evaluate(() => {
-    window.__TINY_TD__.retry()
-    window.__TINY_TD__.buy(2, 7, 'base')
-    window.__TINY_TD__.buy(2, 7, 'turret')
-    window.__TINY_TD__.buy(3, 4, 'base')
-    window.__TINY_TD__.buy(3, 4, 'ballista')
-    window.__TINY_TD__.startWave()
-    window.__TINY_TD__.deselect()
+    const api = window.__TINY_TD__
+    api.retry()
+    api.debugPop()
+    api.deselect()
+    api.setTimeScale(0)
   })
-  await delay(900)
+  await delay(300)
+  const desktop = await stateOf(page)
+  console.log('desktop zoom', desktop?.zoom)
+  if (!desktop || desktop.zoom > 13.2 || desktop.zoom < 11) {
+    throw new Error(`desktop framing is not tighter: ${desktop?.zoom}`)
+  }
   await page.screenshot({ path: `${OUT}/desktop_1280x800.png` })
+  await page.screenshot({ path: `${OUT}/desktop_midwave.png` })
 
   await browser.close()
   console.log('screenshots written to', OUT)

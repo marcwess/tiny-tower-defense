@@ -17,6 +17,7 @@ export class Tower {
   middles: MiddleId[] = []
   roof: RoofId | null = null
   weapon: WeaponId | null = null
+  tier = 0
   spent = 0
   cooldown = 0
   yaw = 0
@@ -38,7 +39,7 @@ export class Tower {
   }
 
   stats(): TowerStats {
-    return towerStats(this.middles, this.roof, this.weapon)
+    return towerStats(this.middles, this.roof, this.weapon, this.tier)
   }
 
   /** First placement plays the kit's build-stage models, then reveals the tower. */
@@ -64,6 +65,16 @@ export class Tower {
   private buildVisuals(pop: boolean): void {
     this.clear()
     this.group.add(spawnModel('tower-round-base'))
+    if (this.tier > 0) {
+      const colors = [0xd08a4a, 0xe07040, 0xf2c14e]
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.46, 0.05, 8, 20),
+        new THREE.MeshLambertMaterial({ color: colors[this.tier - 1] ?? colors[2] }),
+      )
+      ring.rotation.x = Math.PI / 2
+      ring.position.y = 0.58
+      this.group.add(ring)
+    }
     const bottom = spawnModel('tower-round-bottom-a')
     bottom.position.y = BOTTOM_Y
     this.group.add(bottom)
@@ -94,6 +105,7 @@ export class Tower {
       pivot.position.z = this.roof ? -0.18 : 0
       pivot.rotation.y = this.yaw
       const model = spawnModel(`weapon-${this.weapon}`)
+      model.scale.setScalar(1 + this.tier * 0.16)
       pivot.add(model)
       this.group.add(pivot)
       this.weaponPivot = pivot

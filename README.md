@@ -29,22 +29,32 @@ GitHub Pages publishes from `.github/workflows/pages.yml` with base path `/tiny-
 
 ## How to play
 
-The meadow is under attack. UFOs follow the stone path from the north gate to the pet pen. Each UFO that arrives tractor-beams one pet away. The run ends when the pen is empty, or when all 9 waves are cleared with at least one pet left.
+The meadow is under attack. UFOs follow the stone path from the north gate to the pet pen. A UFO that arrives beams a pet and carries it back toward the gate. Shoot that UFO down and the pet parachutes home. A pet is only lost if the UFO escapes. The run ends when every pet is gone, or when all 9 waves are cleared with at least one pet left.
+
+Match the weapon to the UFO. The next-wave card lists who is coming and what they are weak to. A good hit pops **Effective!**
+
+- **Scout** (slim orange): weak to Turret and Frost.
+- **Swarm** (tiny green): weak to Cannon splash and Blast.
+- **Tank** (bulky steel): weak to Ballista pierce and Hex. Other shots barely scratch the armor.
+- **Shield** (cyan, flying): the bubble has to break under rapid hits before the hull does.
+- **Boss** on wave 9: a huge armored UFO with a shield. Ballista or Hex, and something rapid for the bubble.
 
 - **Tap or click** a grass tile, then **Base**. Trees, rocks, crystals, and the river are blocked. Hold a piece to read what it does.
-- **Stack pieces**, including during a wave:
+- **Stack pieces**, including during a wave. Each extra layer costs more than the last.
   - **Swift / Steady / Tall** floors. Height adds range. Swift shoots faster, Tall reaches farther.
-  - **Frost / Blast / Hex** roofs. Slow, splash, or extra damage that shreds shields.
-  - **Ballista, cannon, catapult, turret.** The weapon picks the shot. Ammo matches the model (arrow, shell, boulder, bullet). A tower with no weapon does not fire.
+  - **Frost / Blast / Hex** roofs. Slow, splash, or extra damage that shreds armor.
+  - **Ballista, cannon, catapult, turret.** The weapon picks the shot.
+  - **Upgrade** three times. The weapon grows and the trim changes color.
 - **Drag** to pan. **Pinch** or the **mouse wheel** to zoom.
-- **Start wave** sends the next group. Between waves a countdown calls the next wave for you; starting early pays a small bonus. **2×** speeds the action up.
+- **Call wave** sends the next group. Between waves a small timer counts down and then calls it for you; **Call +gold** pays a bonus for starting early. **2×** speeds the action up. **Nums** toggles damage numbers.
 - **Sell** returns half of what that tower cost.
 - The **speaker** mutes music and effects. The first tap starts the music.
+- Clear the meadow for a star rating: 3 if all five pets are home, 2 for three or four, 1 for one or two.
 
-You begin with 150 gold. A base is 40 and a turret is 35, so the first tower can shoot before wave 1.
+You begin with 120 gold. A base is 40 and a turret is 36, so the first tower can shoot before wave 1.
 
 ## This prototype
 
-In: one handcrafted grass map, modular round towers, four UFO types (scout, dart, brute, shielded flying warden), animated pets, abduction beams, 9 waves, currency, speed control, win/lose retry, hit sparks, a music loop, and a first-time hint.
+In: one handcrafted grass map, modular round towers with rising stack costs and 3 upgrade tiers, five UFO roles (scout, swarm, tank, shield, boss), pet rescue, 9 waves, star rating, currency, speed control, win/lose retry, hit flashes, and a music loop.
 
-Not in this build: square tower pieces, campaign levels, snow and other biomes, stars, endless or daily maps, pet collection, and the native iOS/Android wrapper. The web build is a static Vite app, so a later Capacitor wrap can load the same `dist/`.
+Not in this build: square tower pieces, campaign levels, snow and other biomes, endless or daily maps, pet collection, and the native iOS/Android wrapper. The web build is a static Vite app, so a later Capacitor wrap can load the same `dist/`.

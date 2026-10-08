@@ -14,8 +14,22 @@ interface TinyState {
   leaks: number
   towers: number
   spawned: number
+  rescues: number
+  abductions: number
+  stars: number
+  carries: number
   fps: number
   zoom: number
+  log: {
+    wave: number
+    gold: number
+    kills: number
+    leaks: number
+    pets: number
+    rescues: number
+    abductions: number
+    came: string
+  }[]
 }
 
 interface TinyApi {
@@ -33,6 +47,10 @@ interface TinyApi {
   deselect: () => void
   select: (x: number, z: number) => void
   debugAbduct: () => void
+  debugRescue: () => void
+  debugBoss: () => void
+  debugPreview: () => void
+  debugPop: () => void
   debugWin: () => void
   debugLose: () => void
   retry: () => void
