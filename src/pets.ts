@@ -76,8 +76,8 @@ export class Pet {
       this.group.rotation.z = Math.sin(this.clock * 16) * 0.12
       this.group.position.y = Math.abs(Math.sin(this.clock * 12)) * 0.045
     } else if (!this.reserved) {
-      this.group.rotation.z = 0
-      this.group.position.y = 0
+      this.group.rotation.z = Math.sin(this.clock * 2.4) * 0.03
+      this.group.position.y = Math.abs(Math.sin(this.clock * 3.1)) * 0.035
     }
   }
 

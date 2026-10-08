@@ -286,7 +286,14 @@ function cloneStatic(src: THREE.Object3D): THREE.Object3D {
 export function spawnModel(name: string): THREE.Object3D {
   const src = templates.get(name)
   if (!src) throw new Error(`Missing model ${name}`)
-  return cloneStatic(src)
+  const clone = cloneStatic(src)
+  if (name.includes('ammo') || name.includes('debris') || name.includes('beam')) {
+    clone.traverse((obj) => {
+      const mesh = obj as THREE.Mesh
+      if (mesh.isMesh) mesh.castShadow = false
+    })
+  }
+  return clone
 }
 
 export function tintModel(root: THREE.Object3D, tint: number): void {

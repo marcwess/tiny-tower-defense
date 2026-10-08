@@ -16,6 +16,9 @@ hud.onStart = () => {
 hud.onSpeed = () => game.toggleSpeed()
 hud.onMute = () => game.toggleMute()
 hud.onGear = () => game.openSettings()
+hud.onPause = () => game.togglePause()
+hud.onResume = () => game.resume()
+hud.onQuit = () => game.quit()
 hud.onDamage = () => game.toggleDamage()
 hud.onRetry = () => {
   audio.unlock()
@@ -102,5 +105,15 @@ void game.init().catch((error: unknown) => {
     debugSettings: () => {},
     debugCoach: () => {},
     iconUrl: () => '',
+    perf: () => ({
+      playResizes: 0,
+      playCompiles: 0,
+      playUploads: 0,
+      geometries: 0,
+      textures: 0,
+      programs: 0,
+      uploadsPerSec: 0,
+    }),
+    pause: () => {},
   }
 })

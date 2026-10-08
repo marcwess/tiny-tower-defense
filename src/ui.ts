@@ -17,6 +17,7 @@ export interface SelectionView {
   blurb: string
   stats: string
   actions: ActionButton[]
+  anchor: { x: number; y: number } | null
 }
 
 export interface TitleLevel {
@@ -36,12 +37,18 @@ export interface CoachBox {
   b: number
 }
 
+export interface HandView {
+  text: string
+  x: number
+  y: number
+  part: string | null
+}
+
 export interface CoachView {
   text: string
   target: CoachBox
   avoid: CoachBox[]
   lane: Array<{ x: number; y: number }>
-  /** Keep the arrow on this side of the bubble so it stays on the real control. */
   pin?: 'down' | 'up' | 'left' | 'right'
 }
 
@@ -66,7 +73,8 @@ export interface HudState {
   selection: SelectionView | null
   end: { kind: 'win' | 'lose'; title: string; detail: string; stars: number } | null
   title: TitleLevel[] | null
-  coach: CoachView | null
+  coach: HandView | null
+  paused: boolean
   settingsOpen: boolean
   settings: Settings
   hapticsAvailable: boolean
@@ -84,6 +92,9 @@ export class Hud {
   onPlay: () => void = () => {}
   onPickLevel: (id: number) => void = () => {}
   onCoach: () => void = () => {}
+  onPause: () => void = () => {}
+  onResume: () => void = () => {}
+  onQuit: () => void = () => {}
   onCloseSettings: () => void = () => {}
   onSettings: (patch: Partial<Settings>) => void = () => {}
 
@@ -91,14 +102,12 @@ export class Hud {
   private goldEl: HTMLElement
   private waveEl: HTMLElement
   private petsEl: HTMLElement
-  private muteEl: HTMLButtonElement
+  private muteEl: HTMLButtonElement | null
   private speedEl: HTMLButtonElement
   private startEl: HTMLButtonElement
   private hintEl: HTMLElement
   private cardEl: HTMLElement
-  private titleEl: HTMLElement
   private blurbEl: HTMLElement
-  private statsEl: HTMLElement
   private trayEl: HTMLElement
   private endEl: HTMLElement
   private endTitle: HTMLElement
@@ -120,16 +129,19 @@ export class Hud {
   private focusedId: string | null = null
   private holdTimer = 0
   private suppressClick = false
-  private muteIcon: HTMLImageElement
+  private muteIcon: HTMLImageElement | null
+  private radialEl: HTMLElement
+  private handEl: HTMLElement
+  private handLine: HTMLElement
+  private pauseEl: HTMLElement
+  private pauseBtn: HTMLButtonElement
+  private soundBtn: HTMLButtonElement
   private titleElScreen: HTMLElement
   private levelsEl: HTMLElement
-  private coachEl: HTMLElement
-  private coachText: HTMLElement
   private sheetEl: HTMLElement
   private nextEl: HTMLButtonElement
   private levelsBtn: HTMLButtonElement
   private titleSig = ''
-  private coachSig = ''
 
   constructor(app: HTMLElement) {
     app.innerHTML = `
@@ -138,8 +150,7 @@ export class Hud {
           <div class="pill gold" id="gold"><img alt="" src="${asset('assets/icons/coin.png')}" /><span>0</span></div>
           <div class="pill wave" id="wave"><img alt="" src="${asset('assets/icons/flag.png')}" /><span>1/9</span></div>
           <div class="pill pets" id="pets"><img alt="" src="${heartUrl()}" /><span>5</span></div>
-          <button type="button" id="mute" class="round" aria-label="Sound"><img alt="" src="${asset('assets/icons/audio-on.png')}" /></button>
-          <button type="button" id="gear" class="round" aria-label="Settings"><img alt="" src="${asset('assets/ui/mobile-controls/Sprites/Icons/Default/icon_cog.png')}" /></button>
+          <button type="button" id="pause" class="round" aria-label="Pause"><img alt="" src="${asset('assets/ui/mobile-controls/Sprites/Icons/Default/icon_pause.png')}" /></button>
         </header>
         <div id="banner" hidden>
           <p id="banner-title"></p>
@@ -147,7 +158,7 @@ export class Hud {
         </div>
         <div id="dock">
           <div id="preview" class="chip-row" hidden></div>
-          <p id="hint"></p>
+          <p id="hint" hidden></p>
           <section id="card" hidden>
             <h2 id="card-title"></h2>
             <p id="card-stats"></p>
@@ -156,9 +167,9 @@ export class Hud {
           </section>
           <div id="actions">
             <button type="button" id="speed" class="btn yellow">1×</button>
-            <button type="button" id="dmg" class="btn yellow" aria-pressed="true">Nums</button>
+            <button type="button" id="dmg" class="btn yellow" hidden aria-pressed="true">Nums</button>
             <div id="count" hidden></div>
-            <button type="button" id="start" class="btn green">Call wave</button>
+            <button type="button" id="start" class="btn green">Call</button>
           </div>
         </div>
       </div>
@@ -182,6 +193,22 @@ export class Hud {
         <div id="title-band">
           <button type="button" id="play" class="btn green">Play</button>
           <div id="levels"></div>
+        </div>
+      </div>
+      <div id="radial" hidden></div>
+      <div id="hand" hidden>
+        <img id="hand-img" alt="" src="${asset('assets/ui/mobile-controls/Sprites/Icons/Default/icon_hand.png')}" />
+        <p id="hand-line"></p>
+        <button type="button" id="hand-skip" class="btn yellow">Skip</button>
+      </div>
+      <div id="pause-menu" hidden>
+        <div class="sheet">
+          <h2>Paused</h2>
+          <button type="button" id="resume" class="btn green">Resume</button>
+          <button type="button" id="restart" class="btn blue">Restart</button>
+          <button type="button" id="pause-settings" class="btn blue">Settings</button>
+          <button type="button" id="pause-sound" class="btn yellow">Sound</button>
+          <button type="button" id="quit" class="btn red">Quit</button>
         </div>
       </div>
       <div id="coach" hidden>
@@ -214,15 +241,19 @@ export class Hud {
     this.goldEl = this.need('#gold span')
     this.waveEl = this.need('#wave span')
     this.petsEl = this.need('#pets span')
-    this.muteEl = this.need('#mute') as HTMLButtonElement
-    this.muteIcon = this.need('#mute img') as HTMLImageElement
+    this.muteEl = this.root.querySelector('#mute') as HTMLButtonElement | null
+    this.muteIcon = this.root.querySelector('#mute img') as HTMLImageElement | null
+    this.radialEl = this.need('#radial')
+    this.handEl = this.need('#hand')
+    this.handLine = this.need('#hand-line')
+    this.pauseEl = this.need('#pause-menu')
+    this.pauseBtn = this.need('#pause') as HTMLButtonElement
+    this.soundBtn = this.need('#pause-sound') as HTMLButtonElement
     this.speedEl = this.need('#speed') as HTMLButtonElement
     this.startEl = this.need('#start') as HTMLButtonElement
     this.hintEl = this.need('#hint')
     this.cardEl = this.need('#card')
-    this.titleEl = this.need('#card-title')
     this.blurbEl = this.need('#card-blurb')
-    this.statsEl = this.need('#card-stats')
     this.trayEl = this.need('#tray')
     this.endEl = this.need('#end')
     this.endTitle = this.need('#end-title')
@@ -239,16 +270,21 @@ export class Hud {
     this.loadingText = this.need('#loading-text')
     this.titleElScreen = this.need('#title')
     this.levelsEl = this.need('#levels')
-    this.coachEl = this.need('#coach')
-    this.coachText = this.need('#coach-text')
     this.sheetEl = this.need('#sheet')
     this.nextEl = this.need('#next') as HTMLButtonElement
     this.levelsBtn = this.need('#to-levels') as HTMLButtonElement
 
     this.speedEl.addEventListener('click', () => this.onSpeed())
     this.startEl.addEventListener('click', () => this.onStart())
-    this.muteEl.addEventListener('click', () => this.onMute())
-    this.need('#gear').addEventListener('click', () => this.onGear())
+    this.muteEl?.addEventListener('click', () => this.onMute())
+    this.root.querySelector('#gear')?.addEventListener('click', () => this.onGear())
+    this.pauseBtn.addEventListener('click', () => this.onPause())
+    this.need('#resume').addEventListener('click', () => this.onResume())
+    this.need('#restart').addEventListener('click', () => this.onRetry())
+    this.need('#pause-settings').addEventListener('click', () => this.onGear())
+    this.soundBtn.addEventListener('click', () => this.onMute())
+    this.need('#quit').addEventListener('click', () => this.onQuit())
+    this.need('#hand-skip').addEventListener('click', () => this.onCoach())
     this.damageEl.addEventListener('click', () => this.onDamage())
     this.need('#retry').addEventListener('click', () => this.onRetry())
     this.nextEl.addEventListener('click', () => this.onNext())
@@ -302,6 +338,15 @@ export class Hud {
       const id = button?.dataset.part
       if (id) this.onAction(id)
     })
+    this.radialEl.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest('button')
+      const id = button?.dataset.part
+      if (!id || button?.classList.contains('off')) {
+        if (id) this.onAction(id)
+        return
+      }
+      if (id) this.onAction(id)
+    })
   }
 
   private showFocused(): void {
@@ -322,44 +367,55 @@ export class Hud {
     this.loadingText.textContent = text
   }
 
-  flyCoin(x: number, y: number): void {
+  private coinPool: HTMLImageElement[] = []
+  private coinCursor = 0
+  private coinDest = { x: 0, y: 0, ready: false }
+
+  rememberLayout(): void {
     const icon = this.goldEl.parentElement?.querySelector('img')
     if (!(icon instanceof HTMLImageElement)) return
-    const coin = document.createElement('img')
-    coin.alt = ''
-    coin.className = 'fly-coin'
-    coin.src = asset('assets/icons/coin.png')
-    this.root.appendChild(coin)
     const dest = icon.getBoundingClientRect()
-    const size = 22
-    const dx = dest.left + (dest.width - size) / 2
-    const dy = dest.top + (dest.height - size) / 2
+    this.coinDest.x = dest.left + (dest.width - 22) / 2
+    this.coinDest.y = dest.top + (dest.height - 22) / 2
+    this.coinDest.ready = dest.width > 0
+  }
+
+  flyCoin(x: number, y: number): void {
+    if (!this.coinDest.ready) return
+    let coin = this.coinPool[this.coinCursor]
+    if (!coin) {
+      coin = document.createElement('img')
+      coin.alt = ''
+      coin.className = 'fly-coin'
+      coin.src = asset('assets/icons/coin.png')
+      this.root.appendChild(coin)
+      this.coinPool.push(coin)
+    }
+    this.coinCursor = (this.coinCursor + 1) % 8
+    const dx = this.coinDest.x
+    const dy = this.coinDest.y
     const hopX = x + (dx - x) * 0.42
     const hopY = Math.min(y, dy) - 22
-    let settled = false
-    const finish = () => {
-      if (settled) return
-      settled = true
-      coin.remove()
-      this.flashGold()
-    }
+    coin.style.opacity = '1'
     const anim = coin.animate(
       [
-        { transform: `translate(${x - size / 2}px, ${y - size / 2}px) scale(0.65)`, opacity: 1 },
+        { transform: `translate(${x - 11}px, ${y - 11}px) scale(0.65)`, opacity: 1 },
         { transform: `translate(${hopX}px, ${hopY}px) scale(1.35)`, opacity: 1, offset: 0.38 },
         { transform: `translate(${dx}px, ${dy}px) scale(0.22)`, opacity: 0.2 },
       ],
       { duration: 340, easing: 'cubic-bezier(.2,.7,.2,1)', fill: 'forwards' },
     )
+    const finish = () => {
+      coin.style.opacity = '0'
+    }
     void anim.finished.then(finish, finish)
-    window.setTimeout(finish, 420)
   }
 
   flashGold(): void {
     const pill = this.goldEl.parentElement
-    pill?.classList.remove('shake')
-    void pill?.offsetWidth
-    pill?.classList.add('shake')
+    if (!pill) return
+    pill.classList.remove('shake')
+    window.requestAnimationFrame(() => pill.classList.add('shake'))
   }
 
   /** Coin flights and other DOM ghosts. World popups are cleared on the effect system. */
@@ -374,9 +430,15 @@ export class Hud {
     }
     this.waveEl.textContent = state.waveLabel.replace(/^Wave\s+/i, '')
     this.petsEl.textContent = `${state.pets}/${state.petMax}`
-    this.muteIcon.src = asset(state.muted ? 'assets/icons/audio-off.png' : 'assets/icons/audio-on.png')
-    this.muteEl.setAttribute('aria-label', state.muted ? 'Muted' : 'Sound')
-    this.muteEl.setAttribute('aria-pressed', state.muted ? 'true' : 'false')
+    if (this.muteIcon && this.muteEl) {
+      const nextSrc = asset(state.muted ? 'assets/icons/audio-off.png' : 'assets/icons/audio-on.png')
+      if (!this.muteIcon.src.endsWith(nextSrc.slice(nextSrc.lastIndexOf('/') + 1))) this.muteIcon.src = nextSrc
+      this.muteEl.setAttribute('aria-label', state.muted ? 'Muted' : 'Sound')
+      this.muteEl.setAttribute('aria-pressed', state.muted ? 'true' : 'false')
+    }
+    this.soundBtn.textContent = state.muted ? 'Sound off' : 'Sound on'
+    this.pauseBtn.hidden = state.phase === 'title'
+    this.pauseEl.hidden = !state.paused
     this.speedEl.textContent = `${state.speed}×`
     this.speedEl.classList.toggle('pressed', state.speed > 1)
     this.damageEl.textContent = state.damageNumbers ? 'Nums' : 'Nums off'
@@ -386,58 +448,14 @@ export class Hud {
     this.startEl.disabled = !state.startEnabled
     this.countEl.hidden = !state.countdownLabel
     this.countEl.textContent = state.countdownLabel ?? ''
-    this.hintEl.textContent = 'Tap a pad to build, then stack a weapon. Taller towers reach farther.'
-    this.hintEl.hidden = !state.hint
+    this.hintEl.hidden = true
     this.fillChips(this.previewEl, state.preview, 'chip')
     this.bannerEl.hidden = !state.bannerTitle
     this.bannerTitle.textContent = state.bannerTitle ?? ''
     this.fillChips(this.bannerChipsEl, state.bannerChips, 'bchip')
 
-    if (!state.selection) {
-      this.cardEl.hidden = true
-      this.signature = ''
-      this.focusedId = null
-      this.actions = []
-    } else {
-      this.cardEl.hidden = false
-      this.titleEl.textContent = state.selection.title
-      this.statsEl.textContent = state.selection.stats
-      this.actions = state.selection.actions
-      const sig = state.selection.actions.map((action) => action.id).join('|')
-      if (sig !== this.signature) {
-        this.signature = sig
-        this.focusedId = null
-        this.trayEl.innerHTML = ''
-        const coin = asset('assets/icons/coin.png')
-        for (const action of state.selection.actions) {
-          const button = document.createElement('button')
-          button.type = 'button'
-          button.dataset.part = action.id
-          button.className = `piece ${action.tone}`
-          const thumb =
-            action.id === 'upgrade'
-              ? asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')
-              : pieceThumbnail(action.id)
-          const art = thumb
-            ? `<img class="thumb" alt="" src="${thumb}" />`
-            : `<img class="thumb fallback" alt="" src="${coin}" />`
-          button.innerHTML = `${art}<span class="piece-name">${action.label}</span><span class="piece-effect">${action.effect}</span><span class="piece-cost"><img class="coin" alt="" src="${coin}" /><span class="cost-num">${action.cost}</span></span>`
-          this.trayEl.appendChild(button)
-        }
-      }
-      const buttons = this.trayEl.querySelectorAll('button')
-      state.selection.actions.forEach((action, index) => {
-        const button = buttons[index] as HTMLButtonElement | undefined
-        if (!button) return
-        button.setAttribute('aria-disabled', action.enabled ? 'false' : 'true')
-        const cost = button.querySelector('.cost-num')
-        if (cost) cost.textContent = action.cost
-        button.classList.toggle('off', !action.enabled)
-        button.classList.toggle('hot', action.id === this.focusedId)
-      })
-      this.showFocused()
-      this.syncCardFade()
-    }
+    this.cardEl.hidden = true
+    this.renderRadial(state.selection)
 
     if (state.end) {
       this.endEl.hidden = false
@@ -471,8 +489,92 @@ export class Hud {
       this.starSignature = ''
     }
     this.renderTitle(state.title)
-    this.renderCoach(state.coach)
+    this.renderHand(state.coach)
     this.renderSettings(state)
+  }
+
+  private renderRadial(selection: SelectionView | null): void {
+    if (!selection || selection.actions.length === 0 || !selection.anchor) {
+      this.radialEl.hidden = true
+      this.signature = ''
+      this.actions = []
+      return
+    }
+    this.radialEl.hidden = false
+    this.radialEl.style.left = `${selection.anchor.x}px`
+    this.radialEl.style.top = `${selection.anchor.y}px`
+    this.actions = selection.actions
+    const sig = selection.actions.map((action) => action.id).join('|')
+    if (sig !== this.signature) {
+      this.signature = sig
+      this.radialEl.replaceChildren()
+      const coin = asset('assets/icons/coin.png')
+      selection.actions.forEach((action, index) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.dataset.part = action.id
+        button.className = `radial-btn ${action.tone}`
+        const count = selection.actions.length
+        const spread = count <= 2 ? 1.15 : 0.72
+        const angle = -Math.PI / 2 + (index - (count - 1) / 2) * spread
+        const radius = count <= 2 ? 74 : 86
+        button.style.setProperty('--rx', `${Math.cos(angle) * radius}px`)
+        button.style.setProperty('--ry', `${Math.sin(angle) * radius}px`)
+        const thumb = action.id === 'upgrade' || action.id === 'sell' ? '' : pieceThumbnail(action.id)
+        if (thumb) {
+          const img = document.createElement('img')
+          img.alt = ''
+          img.src = thumb
+          button.append(img)
+        }
+        const name = document.createElement('span')
+        name.className = 'radial-name'
+        name.textContent = action.label
+        const cost = document.createElement('span')
+        cost.className = 'radial-cost'
+        const coinImg = document.createElement('img')
+        coinImg.alt = ''
+        coinImg.src = coin
+        const num = document.createElement('span')
+        num.className = 'cost-num'
+        num.textContent = action.cost
+        cost.append(coinImg, num)
+        button.append(name, cost)
+        this.radialEl.append(button)
+      })
+    }
+    const buttons = this.radialEl.querySelectorAll('button')
+    selection.actions.forEach((action, index) => {
+      const button = buttons[index] as HTMLButtonElement | undefined
+      if (!button) return
+      button.classList.toggle('off', !action.enabled)
+      button.setAttribute('aria-disabled', action.enabled ? 'false' : 'true')
+      const cost = button.querySelector('.cost-num')
+      if (cost && cost.textContent !== action.cost) cost.textContent = action.cost
+    })
+  }
+
+  private renderHand(hand: HandView | null): void {
+    this.handEl.hidden = !hand
+    if (!hand) return
+    if (this.handLine.textContent !== hand.text) this.handLine.textContent = hand.text
+    let x = hand.x
+    let y = hand.y
+    if (hand.part) {
+      const node =
+        hand.part === 'start'
+          ? document.querySelector('#start')
+          : document.querySelector(`#radial [data-part="${hand.part}"]`)
+      if (node instanceof HTMLElement) {
+        const box = node.getBoundingClientRect()
+        if (box.width > 2) {
+          x = box.left + box.width * 0.55
+          y = box.top + box.height * 0.45
+        }
+      }
+    }
+    this.handEl.style.left = `${x}px`
+    this.handEl.style.top = `${y}px`
   }
 
   private renderTitle(levels: TitleLevel[] | null): void {
@@ -523,174 +625,6 @@ export class Hud {
       }
       this.levelsEl.append(button)
     }
-  }
-
-  private renderCoach(coach: CoachView | null): void {
-    this.coachEl.hidden = !coach
-    if (!coach) {
-      this.coachSig = ''
-      return
-    }
-    const sig = `${coach.text}:${Math.round(coach.target.l)}:${Math.round(coach.target.t)}:${Math.round(coach.target.r)}`
-    if (sig === this.coachSig) return
-    this.coachSig = sig
-    this.coachText.textContent = coach.text
-    this.coachEl.hidden = false
-    const spot = this.placeCoach(coach)
-    this.coachEl.dataset.side = spot.side
-    this.coachEl.style.left = `${spot.x}px`
-    this.coachEl.style.top = `${spot.y}px`
-  }
-
-  /** Arrow tip a few pixels inside the target, on the pinned side. */
-  private placePinned(coach: CoachView): { x: number; y: number; side: string } {
-    const bubbleW = this.coachEl.offsetWidth || 220
-    const bubbleH = this.coachEl.offsetHeight || 96
-    const vw = window.innerWidth
-    const vh = window.innerHeight
-    const margin = 8
-    const side = coach.pin ?? 'down'
-    const target = coach.target
-    const cx = (target.l + target.r) / 2
-    const cy = (target.t + target.b) / 2
-    let x = cx - bubbleW / 2
-    let y = cy - bubbleH / 2
-    // Sit the arrow body on the control, not on the seam above it.
-    if (side === 'down') y = target.t + 16 - bubbleH
-    else if (side === 'up') y = target.b - 4
-    else if (side === 'right') x = target.l + 4 - bubbleW
-    else x = target.r - 4
-    x = Math.min(vw - margin - bubbleW, Math.max(margin, x))
-    y = Math.min(vh - margin - bubbleH, Math.max(margin, y))
-    if (side === 'down' && this.hitsAvoid(x, y, bubbleW, bubbleH, coach.avoid)) {
-      const altX = Math.max(margin, target.l - 6 - bubbleW)
-      const altY = Math.min(vh - margin - bubbleH, Math.max(margin, cy - bubbleH / 2))
-      const tipX = altX + bubbleW + 8
-      const onTarget = tipX > target.l + 4 && tipX < target.r - 2
-      if (onTarget && !this.hitsAvoid(altX, altY, bubbleW, bubbleH, coach.avoid)) {
-        this.aimArrow('right', altX, bubbleW, cx)
-        return { x: altX, y: altY, side: 'right' }
-      }
-    }
-    this.aimArrow(side, x, bubbleW, cx)
-    return { x, y, side }
-  }
-
-  private hitsAvoid(x: number, y: number, w: number, h: number, avoid: CoachBox[]): boolean {
-    const rect = { l: x, t: y, r: x + w, b: y + h }
-    return avoid.some((box) => this.boxesOverlap(rect, box))
-  }
-
-  private aimArrow(side: string, x: number, bubbleW: number, cx: number): void {
-    const arrow = this.coachEl.querySelector('#coach-arrow')
-    if (!(arrow instanceof HTMLElement)) return
-    arrow.style.left = ''
-    arrow.style.right = ''
-    arrow.style.top = ''
-    arrow.style.bottom = ''
-    if (side === 'down' || side === 'up') {
-      const rel = (cx - x) / bubbleW
-      arrow.style.left = `${Math.min(78, Math.max(22, rel * 100))}%`
-      arrow.style.right = 'auto'
-    }
-  }
-
-  private placeCoach(coach: CoachView): { x: number; y: number; side: string } {
-    if (coach.pin) return this.placePinned(coach)
-    const bubbleW = this.coachEl.offsetWidth || 220
-    const bubbleH = this.coachEl.offsetHeight || 96
-    const vw = window.innerWidth
-    const vh = window.innerHeight
-    const margin = 14
-    const gap = 22
-    const target = coach.target
-    const cx = (target.l + target.r) / 2
-    const cy = (target.t + target.b) / 2
-    const candidates: Array<{ x: number; y: number; side: string; prefer?: boolean }> = [
-      { x: cx - bubbleW / 2, y: target.t - gap - bubbleH, side: 'down' },
-      { x: cx - bubbleW / 2, y: target.t - bubbleH - 48, side: 'down' },
-      { x: cx - bubbleW / 2, y: target.b + gap, side: 'up' },
-      { x: target.l - gap - bubbleW, y: cy - bubbleH / 2, side: 'right' },
-      { x: target.r + gap, y: cy - bubbleH / 2, side: 'left' },
-      { x: margin, y: cy - bubbleH / 2, side: 'right' },
-      { x: vw - margin - bubbleW, y: cy - bubbleH / 2, side: 'left' },
-      { x: margin, y: target.t - gap - bubbleH, side: 'down' },
-      { x: vw - margin - bubbleW, y: target.t - gap - bubbleH, side: 'down' },
-    ]
-    const panel = coach.avoid.find((box) => box.r - box.l > vw * 0.55 && box.b - box.t > 70)
-    if (panel) {
-      candidates.unshift({
-        x: cx - bubbleW / 2,
-        y: panel.t - gap - bubbleH,
-        side: 'down',
-        prefer: true,
-      })
-    }
-    for (const avoid of coach.avoid) {
-      const y = avoid.t - gap - bubbleH
-      if (Math.abs(cy - (y + bubbleH / 2)) > 220) continue
-      candidates.push({ x: cx - bubbleW / 2, y, side: 'down' })
-      candidates.push({ x: margin, y, side: 'down' })
-    }
-    let best = { x: margin, y: margin + 72, side: 'down', score: Infinity }
-    for (const candidate of candidates) {
-      const x = Math.min(vw - margin - bubbleW, Math.max(margin, candidate.x))
-      const y = Math.min(vh - margin - bubbleH, Math.max(margin, candidate.y))
-      const rect = { l: x, t: y, r: x + bubbleW, b: y + bubbleH }
-      const dist = Math.hypot((rect.l + rect.r) / 2 - cx, (rect.t + rect.b) / 2 - cy)
-      let score = dist
-      if (this.boxesOverlap(rect, this.padBox(target, 10))) score += 4000
-      for (const avoid of coach.avoid) {
-        if (this.boxesOverlap(rect, this.padBox(avoid, 6))) score += 2500
-      }
-      if (this.hitsLane(rect, coach.lane, cx, cy)) score += dist < 200 ? 110 : 800
-      if (candidate.prefer && score < 4000) score -= 1800
-      if (score < best.score) best = { x, y, side: candidate.side, score }
-    }
-    const bx = best.x + bubbleW / 2
-    const by = best.y + bubbleH / 2
-    const side = Math.abs(cx - bx) > Math.abs(cy - by) ? (cx > bx ? 'right' : 'left') : cy > by ? 'down' : 'up'
-    best.side = side
-    this.aimArrow(side, best.x, bubbleW, cx)
-    return best
-  }
-
-  private padBox(box: CoachBox, pad: number): CoachBox {
-    return { l: box.l - pad, t: box.t - pad, r: box.r + pad, b: box.b + pad }
-  }
-
-  private boxesOverlap(a: CoachBox, b: CoachBox): boolean {
-    return a.l < b.r && a.r > b.l && a.t < b.b && a.b > b.t
-  }
-
-  private hitsLane(rect: CoachBox, lane: Array<{ x: number; y: number }>, cx: number, cy: number): boolean {
-    if (lane.length < 2) return false
-    const samples = [
-      [(rect.l + rect.r) / 2, (rect.t + rect.b) / 2],
-      [rect.l, rect.t],
-      [rect.r, rect.t],
-      [rect.l, rect.b],
-      [rect.r, rect.b],
-    ]
-    const nearTarget = (x: number, y: number) => Math.hypot(x - cx, y - cy) < 120
-    for (let i = 1; i < lane.length; i++) {
-      const a = lane[i - 1]
-      const b = lane[i]
-      if (nearTarget(a.x, a.y) && nearTarget(b.x, b.y)) continue
-      for (const [px, py] of samples) {
-        if (this.segmentDistance(a.x, a.y, b.x, b.y, px, py) < 26) return true
-      }
-    }
-    return false
-  }
-
-  private segmentDistance(ax: number, ay: number, bx: number, by: number, px: number, py: number): number {
-    const abx = bx - ax
-    const aby = by - ay
-    const ab2 = abx * abx + aby * aby || 1
-    let t = ((px - ax) * abx + (py - ay) * aby) / ab2
-    t = Math.max(0, Math.min(1, t))
-    return Math.hypot(px - (ax + abx * t), py - (ay + aby * t))
   }
 
   private renderSettings(state: HudState): void {
@@ -748,11 +682,6 @@ export class Hud {
       }
       host.append(row)
     }
-  }
-
-  private syncCardFade(): void {
-    const overflow = this.cardEl.scrollHeight > this.cardEl.clientHeight + 2
-    this.cardEl.classList.toggle('fade', overflow)
   }
 
   private need(selector: string): HTMLElement {

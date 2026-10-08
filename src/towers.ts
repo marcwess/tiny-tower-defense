@@ -62,25 +62,41 @@ export class Tower {
     this.buildVisuals(pop)
   }
 
+  /** Upgrade 1 is the mid block, 2 the top, 3 the crown. The weapon stays the tower's job. */
+  private midLayer(): string {
+    if (this.weapon === 'turret') return 'tower-round-middle-a'
+    if (this.weapon === 'ballista') return 'tower-round-middle-c'
+    return 'tower-round-middle-b'
+  }
+
+  private topLayer(): string {
+    return this.weapon === 'cannon' ? 'tower-round-middle-a' : 'tower-round-middle-c'
+  }
+
+  private crownLayer(): string {
+    if (this.weapon === 'cannon') return 'tower-round-roof-b'
+    if (this.weapon === 'catapult') return 'tower-round-roof-a'
+    if (this.weapon === 'ballista') return 'tower-round-roof-c'
+    return 'tower-round-roof-b'
+  }
+
   private buildVisuals(pop: boolean): void {
     this.clear()
     this.group.add(spawnModel('tower-round-base'))
-    if (this.tier > 0) {
-      const colors = [0xd08a4a, 0xe07040, 0xf2c14e]
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(0.46, 0.05, 8, 20),
-        new THREE.MeshLambertMaterial({ color: colors[this.tier - 1] ?? colors[2] }),
-      )
-      ring.rotation.x = Math.PI / 2
-      ring.position.y = 0.58
-      this.group.add(ring)
-    }
     const bottom = spawnModel('tower-round-bottom-a')
     bottom.position.y = BOTTOM_Y
     this.group.add(bottom)
 
     let cursor = BOTTOM_Y
-    let newest: THREE.Object3D | null = null
+    let newest: THREE.Object3D | null = bottom
+    const layers = [this.midLayer(), this.topLayer(), this.crownLayer()]
+    for (let i = 0; i < this.tier && i < layers.length; i++) {
+      cursor += SEGMENT
+      const piece = spawnModel(layers[i])
+      piece.position.y = cursor
+      this.group.add(piece)
+      newest = piece
+    }
     for (const middle of this.middles) {
       cursor += SEGMENT
       const piece = spawnModel(`tower-round-middle-${middle}`)

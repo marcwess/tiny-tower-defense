@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { arrowTexture, heartTexture, loadAssets, renderAppIcon, renderPieceThumbnails, spawnModel } from './assets'
+import { arrowTexture, loadAssets, renderAppIcon, renderPieceThumbnails, spawnModel } from './assets'
 import { audio } from './audio'
 import {
   BASE_COST,
@@ -33,10 +33,11 @@ import { Enemy } from './enemies'
 import { Fx } from './fx'
 import { LEVELS, levelById, type LevelDef } from './levels'
 import { buildMap, cellKey, disposeMap, tickDiorama, type BuiltMap, type MapCell } from './map'
+import { perf } from './perf'
 import { Pet } from './pets'
 import { buzz, levelUnlocked, loadSettings, markTutorial, saveSettings, saveStars, starsFor, tutorialSeen, type Settings } from './progress'
 import { Tower } from './towers'
-import { Hud, type ActionButton, type SelectionView } from './ui'
+import { Hud, type ActionButton, type HandView, type SelectionView } from './ui'
 
 interface Projectile {
   mesh: THREE.Object3D
@@ -87,14 +88,8 @@ interface WaveRow {
 type Phase = 'title' | 'ready' | 'wave' | 'breather' | 'victory' | 'defeat'
 type Tier = 'low' | 'mid' | 'high'
 
-const COACH = [
-  '',
-  'Tap a pad to build',
-  'Stack a weapon on top',
-  'Weak-to tags matter',
-  'Shoot down a UFO carrying a pet to rescue it',
-  'Call wave early for bonus gold',
-]
+const HAND = ['', 'Tap', 'Turret', 'Go', 'Tap', 'Upgrade']
+const SPEED_KEY = 'tiny-td-speed'
 
 const _v = new THREE.Vector3()
 const _aim = new THREE.Vector3()
@@ -132,8 +127,6 @@ function isRoof(id: string): id is RoofId {
   return id === 'a' || id === 'b' || id === 'c'
 }
 
-const MIDDLE_EFFECT: Record<MiddleId, string> = { a: 'Faster', b: 'Range', c: 'Reach' }
-const ROOF_EFFECT: Record<RoofId, string> = { a: 'Slow', b: 'Splash', c: 'Shred' }
 const WEAPON_EFFECT: Record<WeaponId, string> = {
   ballista: 'Pierce',
   cannon: 'Splash',
@@ -191,18 +184,22 @@ function snowSkyTexture(): THREE.CanvasTexture {
   return tex
 }
 
+const beamMat = new THREE.MeshLambertMaterial({
+  color: 0xb7f3ff,
+  emissive: 0x7adfff,
+  emissiveIntensity: 0.9,
+  transparent: true,
+  opacity: 0.62,
+  depthWrite: false,
+})
+
 function styleBeam(root: THREE.Object3D): void {
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh
     if (!mesh.isMesh) return
-    const mat = (mesh.material as THREE.MeshLambertMaterial).clone()
-    mat.color.set(0xb7f3ff)
-    mat.emissive.set(0x7adfff)
-    mat.emissiveIntensity = 0.9
-    mat.transparent = true
-    mat.opacity = 0.62
-    mat.depthWrite = false
-    mesh.material = mat
+    mesh.material = beamMat
+    mesh.castShadow = false
+    mesh.receiveShadow = false
   })
 }
 
@@ -249,6 +246,7 @@ export class Game {
   private spawned = 0
   private speedChoice = 1
   private forcedScale: number | null = null
+  private paused = false
   private time = 0
   private shake = 0
   private fps = 60
@@ -275,8 +273,7 @@ export class Game {
   private settings: Settings = loadSettings()
   private settingsOpen = false
   private tier: Tier = 'high'
-  private slowAccum = 0
-  private allowDowngrade = true
+  private tierReady = false
   private sun!: THREE.DirectionalLight
   private hemi!: THREE.HemisphereLight
   private ambient!: THREE.AmbientLight
@@ -293,6 +290,29 @@ export class Game {
   private padPulse: THREE.Mesh
   private ammoPools = new Map<string, THREE.Object3D[]>()
   private freeProjectiles: Projectile[] = []
+  private rigs: Carry[] = []
+  private glowGeo = new THREE.CylinderGeometry(0.16, 0.28, 1, 12, 1, true)
+  private glowMat = new THREE.MeshBasicMaterial({
+    color: 0xdff8ff,
+    transparent: true,
+    opacity: 0.72,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+  private enemyPool = new Map<EnemyKind, Enemy[]>()
+  private padGlows: THREE.Object3D[] = []
+  private viewRect = { w: 1, h: 1, left: 0, top: 0, hudBottom: 54 }
+  private padGeo = new THREE.RingGeometry(0.42, 0.58, 28)
+  private discGeo = new THREE.CircleGeometry(0.46, 20)
+  private padGlowMat = new THREE.MeshBasicMaterial({
+    color: 0xffd27a,
+    transparent: true,
+    opacity: 0.55,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+  private discMat = new THREE.MeshLambertMaterial({ color: 0xd9d0c2 })
+  private warmed = false
 
   constructor(
     private app: HTMLElement,
@@ -302,12 +322,13 @@ export class Game {
     const capture = params.has('capture')
     const detected = detectTier()
     this.tier = this.settings.quality === 'low' ? 'low' : this.settings.quality === 'high' ? 'high' : detected
-    this.allowDowngrade = !capture && !params.has('measure')
+    const savedSpeed = Number(localStorage.getItem(SPEED_KEY) || '1')
+    this.speedChoice = savedSpeed === 2 ? 2 : 1
     this.showDamage = this.settings.damage
     this.skyGrass = skyTexture()
     this.skySnow = snowSkyTexture()
     this.renderer = new THREE.WebGLRenderer({
-      antialias: false,
+      antialias: this.tier === 'high',
       alpha: false,
       powerPreference: 'high-performance',
       preserveDrawingBuffer: capture,
@@ -409,8 +430,23 @@ export class Game {
     const arrow = await arrowTexture()
     ;(this.hintMarker.material as THREE.SpriteMaterial).map = arrow
     const capture = new URLSearchParams(location.search).has('capture')
+    perf.attach(this.renderer)
+    perf.onToggle = (key, value) => {
+      if (key === 'damage') this.toggleDamage()
+      if (key === 'sound') this.toggleMute()
+      if (key === 'shadows') this.applyTier(this.renderer.shadowMap.enabled ? 'low' : 'high')
+      if (key === 'tier' && (value === 'low' || value === 'mid' || value === 'high')) this.applyTier(value)
+    }
     this.fx = new Fx(this.scene)
     this.installLevel(levelById(1), capture ? 'play' : 'title')
+    this.warmPools()
+    await this.renderer.compileAsync(this.scene, this.camera)
+    perf.playing = false
+    this.updateCamera()
+    this.renderer.render(this.scene, this.camera)
+    perf.playResizes = 0
+    perf.playCompiles = 0
+    perf.playUploads = 0
     this.bindInput()
     this.hud.setLoading(null)
     this.expose()
@@ -429,23 +465,35 @@ export class Game {
   }
 
   private applyTier(tier: Tier): void {
+    const changed = this.tierReady && tier !== this.tier
     this.tier = tier
+    this.tierReady = true
+    if (changed) perf.noteTier(tier)
     const coarse = window.matchMedia('(pointer: coarse)').matches
     const ratio = window.devicePixelRatio || 1
-    const pixel =
-      tier === 'low' ? 1 : tier === 'mid' ? Math.min(ratio, coarse ? 1.25 : 1.5) : Math.min(ratio, coarse ? 1.5 : 1.75)
-    const shadows = tier !== 'low'
-    const size = tier === 'high' ? 1024 : 512
-    this.renderer.setPixelRatio(pixel)
+    const pixel = tier === 'low' ? 1 : tier === 'mid' ? Math.min(ratio, coarse ? 1.5 : 1.75) : Math.min(ratio, 2)
+    const shadows = tier === 'high'
+    const size = 1024
+    const nextRatio = pixel
+    if (this.renderer.getPixelRatio() !== nextRatio) this.renderer.setPixelRatio(nextRatio)
+    const shadowChanged = this.renderer.shadowMap.enabled !== shadows
     this.renderer.shadowMap.enabled = shadows
     this.sun.castShadow = shadows
+    this.sun.shadow.autoUpdate = false
     if (shadows) {
       this.sun.shadow.mapSize.set(size, size)
-      this.sun.shadow.map?.dispose()
-      this.sun.shadow.map = null
+      if (shadowChanged) {
+        this.sun.shadow.map?.dispose()
+        this.sun.shadow.map = null
+      }
+      this.sun.shadow.needsUpdate = true
     }
     this.ensureSnow()
     if (this.renderer.domElement.isConnected) this.resize()
+  }
+
+  private touchBoard(): void {
+    if (this.sun.castShadow) this.sun.shadow.needsUpdate = true
   }
 
   private applyBiome(biome: 'grass' | 'snow'): void {
@@ -545,10 +593,28 @@ export class Game {
     if (width < 2 || height < 2) return
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
-    this.renderer.setSize(width, height, false)
-    this.renderer.domElement.style.width = `${width}px`
-    this.renderer.domElement.style.height = `${height}px`
+    const bufferW = Math.floor(width * this.renderer.getPixelRatio())
+    const bufferH = Math.floor(height * this.renderer.getPixelRatio())
+    const canvas = this.renderer.domElement
+    if (canvas.width !== bufferW || canvas.height !== bufferH) {
+      this.renderer.setSize(width, height, false)
+      perf.noteResize(`${bufferW}x${bufferH}`)
+    }
+    canvas.style.width = `${width}px`
+    canvas.style.height = `${height}px`
+    this.cacheView()
+    this.hud.rememberLayout()
     this.applyFraming(!this.userCam)
+  }
+
+  private cacheView(): void {
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const hud = document.querySelector('#top')?.getBoundingClientRect()
+    this.viewRect.w = rect.width || 1
+    this.viewRect.h = rect.height || 1
+    this.viewRect.left = rect.left
+    this.viewRect.top = rect.top
+    this.viewRect.hudBottom = hud ? hud.bottom - rect.top : 54
   }
 
   /**
@@ -566,12 +632,13 @@ export class Game {
     tz: number
   } {
     const aspect = this.camera.aspect || 1
+    const meadow = this.level?.id === 1
     const pose =
       aspect < 0.62
-        ? { fov: 42, pitch: 0.76, azimuth: 2.8, lookY: 0.25 }
+        ? { fov: meadow ? 40 : 42, pitch: meadow ? 0.62 : 0.76, azimuth: 2.8, lookY: 0.35 }
         : aspect < 1.05
-          ? { fov: 38, pitch: 0.74, azimuth: 2.5, lookY: 0.18 }
-          : { fov: 30, pitch: 0.72, azimuth: 2.25, lookY: 0.12 }
+          ? { fov: meadow ? 36 : 38, pitch: meadow ? 0.6 : 0.74, azimuth: 2.5, lookY: 0.28 }
+          : { fov: meadow ? 28 : 30, pitch: meadow ? 0.58 : 0.72, azimuth: 2.25, lookY: 0.2 }
     if (!this.map) {
       const distance = aspect < 0.62 ? 20.2 : aspect < 1.05 ? 18.4 : 12.2
       const tx = aspect < 0.62 ? 2.6 : aspect < 1.05 ? 3 : 3.15
@@ -784,12 +851,13 @@ export class Game {
       return
     }
     const horiz = Math.cos(this.pitch) * this.distance
-    const bob = Math.sin(performance.now() * 0.04) * this.shake
+    const kick = Math.min(0.06, this.shake)
+    const bob = Math.sin(this.time * 18) * kick
     const orbit = this.phase === 'title' && !this.userCam ? this.titleSpin : 0
     const azimuth = this.azimuth + orbit
     this.camera.position.set(
       this.target.x + Math.sin(azimuth) * horiz + bob,
-      Math.sin(this.pitch) * this.distance + Math.cos(performance.now() * 0.05) * this.shake,
+      Math.sin(this.pitch) * this.distance + Math.cos(this.time * 21) * kick * 0.65,
       this.target.z + Math.cos(azimuth) * horiz,
     )
     this.camera.lookAt(this.target.x, this.lookY, this.target.z)
@@ -836,9 +904,11 @@ export class Game {
       }
       this.target.x -= _ground.x - this.lastGround.x
       this.target.z -= _ground.z - this.lastGround.z
-      this.lastGround.copy(_ground)
       this.userCam = true
       this.clampCamera()
+      this.updateCamera()
+      this.camera.updateMatrixWorld()
+      if (this.groundAt(event.clientX, event.clientY, _ground)) this.lastGround.copy(_ground)
     })
     canvas.addEventListener('pointerup', (event) => this.endPointer(event))
     canvas.addEventListener('pointercancel', (event) => this.endPointer(event))
@@ -882,19 +952,25 @@ export class Game {
   }
 
   private setNdc(clientX: number, clientY: number): void {
-    const rect = this.renderer.domElement.getBoundingClientRect()
-    this.ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1
-    this.ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1
+    const rect = this.viewRect
+    this.ndc.x = ((clientX - rect.left) / rect.w) * 2 - 1
+    this.ndc.y = -((clientY - rect.top) / rect.h) * 2 + 1
   }
 
   private selectAt(clientX: number, clientY: number): void {
-    if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') return
+    if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat' || this.paused) return
     this.setNdc(clientX, clientY)
     this.raycaster.setFromCamera(this.ndc, this.camera)
     const hits = this.raycaster.intersectObjects(this.map.picks, false)
     const cell = (hits[0]?.object.userData.cell as MapCell | undefined) ?? null
-    this.selected = cell
-    if (cell) audio.play('click')
+    if (!cell || cell.kind !== 'build') {
+      this.selected = null
+    } else {
+      this.selected = cell
+      audio.play('click')
+      if (this.tutorStep === 1 && !this.towerAt(cell.x, cell.z)) this.advanceTutor('pad')
+      if (this.tutorStep === 4 && this.towerAt(cell.x, cell.z)) this.advanceTutor('tower')
+    }
     this.syncSelection()
     this.refreshHud()
   }
@@ -909,18 +985,7 @@ export class Game {
 
   private frame(): void {
     const raw = Math.min(this.clock.getDelta(), 0.1)
-    if (this.allowDowngrade && this.settings.quality === 'auto' && this.tier !== 'low') {
-      if (raw > 0.022) {
-        this.slowAccum += raw
-        if (this.slowAccum >= 3) {
-          this.slowAccum = 0
-          const next: Tier = this.tier === 'high' ? 'mid' : 'low'
-          this.applyTier(next)
-        }
-      } else {
-        this.slowAccum = Math.max(0, this.slowAccum - raw * 0.5)
-      }
-    }
+    perf.playing = !this.paused && (this.phase === 'wave' || this.phase === 'breather')
     this.fpsAccum += raw
     this.fpsFrames += 1
     if (this.fpsAccum >= 0.4) {
@@ -928,26 +993,32 @@ export class Game {
       this.fpsAccum = 0
       this.fpsFrames = 0
     }
-    let scaled = raw * (this.forcedScale ?? this.speedChoice)
-    let guard = 0
-    while (scaled > 0 && guard < 80) {
-      const dt = Math.min(0.02, scaled)
-      this.tick(dt)
-      scaled -= dt
-      guard += 1
+    if (!this.paused) {
+      let scaled = raw * (this.forcedScale ?? this.speedChoice)
+      let guard = 0
+      while (scaled > 0 && guard < 80) {
+        const dt = Math.min(0.02, scaled)
+        this.tick(dt)
+        scaled -= dt
+        guard += 1
+      }
+      perf.noteStep(guard)
+      this.visualTime += raw
+      if (this.phase === 'title') this.titleSpin += raw * 0.18
+      if (this.map) tickDiorama(this.map, this.visualTime)
+      this.tickSnow()
+      this.keepPopupsUnderHud()
+      this.refreshHud()
     }
-    this.visualTime += raw
-    if (this.phase === 'title') this.titleSpin += raw * 0.18
-    if (this.map) tickDiorama(this.map, this.visualTime)
-    this.tickSnow()
     this.updateCamera()
     for (const enemy of this.enemies) enemy.billboard(this.camera)
     this.renderer.render(this.scene, this.camera)
+    perf.sample(raw * 1000, this.renderer, this.tier)
   }
 
   private tick(dt: number): void {
     this.time += dt
-    this.shake = Math.max(0, this.shake - dt * 1.4)
+    this.shake = Math.max(0, this.shake - dt * 2.4)
     if (this.bannerT > 0) {
       this.bannerT = Math.max(0, this.bannerT - dt)
       if (this.bannerT === 0) {
@@ -957,6 +1028,11 @@ export class Game {
     }
     const playing = this.phase === 'ready' || this.phase === 'wave' || this.phase === 'breather'
     if (this.phase === 'wave') this.updateSpawns(dt)
+    if (this.phase === 'ready' && this.level.id === 1 && (this.tutorStep === 0 || this.tutorStep >= 3)) {
+      if (this.countdown <= 0) this.countdown = this.tutorStep >= 3 ? 2.6 : 4
+      this.countdown -= dt
+      if (this.countdown <= 0) this.startWave(false)
+    }
     if (this.phase === 'breather') {
       this.countdown -= dt
       if (this.countdown <= 0) this.startWave(false)
@@ -987,7 +1063,6 @@ export class Game {
     }
     for (const tower of this.towers) tower.update(dt)
     this.fx.update(dt)
-    this.keepPopupsUnderHud()
     if (this.hintMarker.visible) {
       this.hintMarker.position.y = 1.05 + Math.sin(this.time * 4) * 0.1
     }
@@ -996,7 +1071,6 @@ export class Game {
       this.padPulse.scale.setScalar(pulse)
       ;(this.padPulse.material as THREE.MeshBasicMaterial).opacity = 0.55 + Math.sin(this.time * 5) * 0.35
     }
-    this.refreshHud()
   }
 
   private updateSpawns(dt: number): void {
@@ -1011,7 +1085,8 @@ export class Game {
   }
 
   private spawnEnemy(kind: EnemyKind, hpMul = 1, entry = 0): Enemy {
-    const enemy = new Enemy(kind, hpMul)
+    const meadow = this.level.id === 1
+    const enemy = this.takeEnemy(kind, hpMul * (meadow ? 0.72 : 1), meadow ? 1.22 : 1, meadow ? 1.42 : 1)
     const points = this.map.points
     const max = Math.max(1, points.length - 1)
     const index = Math.min(max - 1, Math.floor(Math.max(0, entry) * max))
@@ -1022,6 +1097,54 @@ export class Game {
     this.enemies.push(enemy)
     this.scene.add(enemy.group)
     return enemy
+  }
+
+  private takeEnemy(kind: EnemyKind, hpScale: number, speedScale: number, visualScale: number): Enemy {
+    const list = this.enemyPool.get(kind) ?? []
+    const enemy = list.pop() ?? new Enemy(kind)
+    this.enemyPool.set(kind, list)
+    enemy.activate(hpScale, speedScale, visualScale)
+    return enemy
+  }
+
+  private releaseEnemy(enemy: Enemy): void {
+    if (enemy.pooled) return
+    enemy.pooled = true
+    enemy.alive = false
+    enemy.badge.visible = false
+    enemy.group.visible = false
+    this.scene.remove(enemy.group)
+    const list = this.enemyPool.get(enemy.kind) ?? []
+    list.push(enemy)
+    this.enemyPool.set(enemy.kind, list)
+  }
+
+  private warmPools(): void {
+    if (this.warmed) return
+    this.warmed = true
+    const counts: Record<EnemyKind, number> = { scout: 16, swarm: 24, tank: 8, shield: 8, boss: 2 }
+    for (const kind of Object.keys(counts) as EnemyKind[]) {
+      for (let i = 0; i < counts[kind]; i++) {
+        const enemy = new Enemy(kind)
+        enemy.activate(1, 1, 1)
+        enemy.pooled = true
+        enemy.group.visible = false
+        this.scene.add(enemy.group)
+        const list = this.enemyPool.get(kind) ?? []
+        list.push(enemy)
+        this.enemyPool.set(kind, list)
+      }
+    }
+    for (let i = 0; i < 3; i++) this.makeRig()
+    this.fx.prepare()
+    this.fx.popup(0, -30, 0, '12', '#fff6ea', 0.2)
+    this.fx.burst(0, -30, 0, 0xfff4c4, 4, 1)
+    for (const name of ['weapon-ammo-arrow', 'weapon-ammo-cannonball', 'weapon-ammo-boulder', 'weapon-ammo-bullet']) {
+      const mesh = spawnModel(name)
+      mesh.visible = false
+      mesh.position.set(0, -30, 0)
+      this.scene.add(mesh)
+    }
   }
 
   private onArrive(enemy: Enemy): void {
@@ -1050,52 +1173,67 @@ export class Game {
     if (this.livingPets() <= 0) this.lose()
   }
 
+  private makeRig(): Carry {
+    const beam = spawnModel('enemy-ufo-beam')
+    const burst = spawnModel('enemy-ufo-beam-burst')
+    styleBeam(beam)
+    styleBeam(burst)
+    const glow = new THREE.Mesh(this.glowGeo, this.glowMat)
+    glow.renderOrder = 4
+    glow.castShadow = false
+    beam.visible = false
+    burst.visible = false
+    glow.visible = false
+    this.scene.add(beam)
+    this.scene.add(burst)
+    this.scene.add(glow)
+    const rig: Carry = {
+      enemy: null as unknown as Enemy,
+      pet: null as unknown as Pet,
+      phase: 'beam',
+      time: 0,
+      beam,
+      burst,
+      glow,
+      icon: beam as unknown as THREE.Sprite,
+      spark: 0,
+    }
+    this.rigs.push(rig)
+    return rig
+  }
+
+  private takeRig(): Carry {
+    const idle = this.rigs.find((rig) => !rig.beam.visible)
+    const rig = idle ?? this.makeRig()
+    rig.beam.visible = true
+    rig.burst.visible = true
+    rig.glow.visible = true
+    return rig
+  }
+
   private beginCarry(enemy: Enemy, pet: Pet): void {
     pet.reserved = true
     pet.ride()
     pet.play('gesture-negative')
     enemy.abducting = true
     enemy.carrying = true
-    const beam = spawnModel('enemy-ufo-beam')
-    const burst = spawnModel('enemy-ufo-beam-burst')
-    styleBeam(beam)
-    styleBeam(burst)
-    const glow = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.16, 0.28, 1, 16, 1, true),
-      new THREE.MeshBasicMaterial({
-        color: 0xdff8ff,
-        transparent: true,
-        opacity: 0.72,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    )
-    glow.renderOrder = 4
-    const icon = new THREE.Sprite(
-      new THREE.SpriteMaterial({
-        map: heartTexture(),
-        transparent: true,
-        depthWrite: false,
-        alphaTest: 0.35,
-        toneMapped: false,
-      }),
-    )
-    icon.center.set(0.5, 0)
-    icon.scale.set(0.34, 0.34, 1)
-    icon.position.y = ENEMIES[enemy.kind].scale * 1.05 + 0.36
-    icon.renderOrder = 8
-    enemy.group.add(icon)
-    this.scene.add(beam)
-    this.scene.add(burst)
-    this.scene.add(glow)
-    this.carries.push({ enemy, pet, phase: 'beam', time: 0, beam, burst, glow, icon, spark: 0 })
+    const rig = this.takeRig()
+    enemy.badge.visible = true
+    rig.enemy = enemy
+    rig.pet = pet
+    rig.phase = 'beam'
+    rig.time = 0
+    rig.spark = 0
+    rig.icon = enemy.badge
+    this.carries.push(rig)
     this.abductions += 1
     audio.play('beam')
-    this.shake = Math.max(this.shake, 0.14)
+    this.shake = Math.min(0.06, Math.max(this.shake, 0.04))
   }
 
   private updateCarries(dt: number): void {
-    for (const carry of [...this.carries]) {
+    for (let i = this.carries.length - 1; i >= 0; i--) {
+      const carry = this.carries[i]
       if (!carry.enemy.alive) {
         this.rescue(carry)
         continue
@@ -1148,13 +1286,13 @@ export class Game {
   }
 
   private dropCarry(carry: Carry): void {
-    this.scene.remove(carry.beam)
-    this.scene.remove(carry.burst)
-    this.scene.remove(carry.glow)
-    carry.enemy.group.remove(carry.icon)
-    ;(carry.icon.material as THREE.Material).dispose()
+    carry.beam.visible = false
+    carry.burst.visible = false
+    carry.glow.visible = false
+    if (carry.enemy) carry.enemy.badge.visible = false
     carry.pet.group.rotation.z = 0
-    this.carries = this.carries.filter((item) => item !== carry)
+    const index = this.carries.indexOf(carry)
+    if (index >= 0) this.carries.splice(index, 1)
   }
 
   private rescue(carry: Carry): void {
@@ -1170,7 +1308,7 @@ export class Game {
     this.advanceTutor('rescue')
     this.popText(enemy.pos.x, enemy.pos.y + 0.55, enemy.pos.z, 'Saved!', '#b8ffb0', 1.15)
     this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xd8ffe4, 10, 2.2)
-    this.shake = Math.max(this.shake, 0.08)
+    this.shake = Math.min(0.06, Math.max(this.shake, 0.035))
   }
 
   private updateTowers(dt: number): void {
@@ -1274,7 +1412,6 @@ export class Game {
       homing: !stats.arc,
       speed: stats.speed,
       target,
-      hit: new Set(),
       alive: true,
     })
     audio.play(stats.sfx)
@@ -1389,7 +1526,7 @@ export class Game {
 
   private splash(proj: Projectile, origin: THREE.Vector3): void {
     proj.splashHit = true
-    for (const enemy of [...this.enemies]) {
+    for (const enemy of this.enemies) {
       if (!enemy.alive || proj.hit.has(enemy.id)) continue
       const dist = Math.hypot(enemy.pos.x - origin.x, enemy.pos.z - origin.z)
       const radius = proj.splash + enemy.radius * 0.4
@@ -1418,9 +1555,9 @@ export class Game {
   private flyCoins(origin: THREE.Vector3, count: number): void {
     _v.copy(origin).project(this.camera)
     if (_v.z > 1) return
-    const rect = this.renderer.domElement.getBoundingClientRect()
-    const x = (_v.x * 0.5 + 0.5) * rect.width + rect.left
-    const y = (-_v.y * 0.5 + 0.5) * rect.height + rect.top
+    const rect = this.viewRect
+    const x = (_v.x * 0.5 + 0.5) * rect.w + rect.left
+    const y = (-_v.y * 0.5 + 0.5) * rect.h + rect.top
     for (let i = 0; i < count; i++) {
       window.setTimeout(() => this.hud.flyCoin(x + (i - 1) * 6, y), i * 28)
     }
@@ -1441,31 +1578,28 @@ export class Game {
       this.fx.popup(x, y, z, text, color, life)
       return
     }
-    const rect = this.renderer.domElement.getBoundingClientRect()
-    const hud = document.querySelector('#top')?.getBoundingClientRect()
-    const hudBottom = hud ? hud.bottom - rect.top : 54
-    const marginX = Math.min(rect.width * 0.42, 18 + text.length * 6.5)
-    let px = (_v.x * 0.5 + 0.5) * rect.width
-    let py = (-_v.y * 0.5 + 0.5) * rect.height
-    px = THREE.MathUtils.clamp(px, marginX, Math.max(marginX, rect.width - marginX))
+    const rect = this.viewRect
+    const hudBottom = rect.hudBottom
+    const marginX = Math.min(rect.w * 0.42, 18 + text.length * 6.5)
+    let px = (_v.x * 0.5 + 0.5) * rect.w
+    let py = (-_v.y * 0.5 + 0.5) * rect.h
+    px = THREE.MathUtils.clamp(px, marginX, Math.max(marginX, rect.w - marginX))
     const half = text.length > 8 ? 26 : 18
     const minCenter = hudBottom + half + 8
-    const maxCenter = rect.height - half - 10
+    const maxCenter = rect.h - half - 10
     py -= screenLift
     if (py < minCenter) py = Math.min(maxCenter, minCenter + screenLift)
     py = THREE.MathUtils.clamp(py, minCenter, Math.max(minCenter, maxCenter))
-    _v.x = (px / rect.width) * 2 - 1
-    _v.y = -((py / rect.height) * 2 - 1)
+    _v.x = (px / rect.w) * 2 - 1
+    _v.y = -((py / rect.h) * 2 - 1)
     _v.unproject(this.camera)
     this.fx.popup(_v.x, _v.y, _v.z, text, color, life)
   }
 
   private keepPopupsUnderHud(): void {
-    const canvas = this.renderer.domElement.getBoundingClientRect()
-    if (canvas.height < 2) return
-    const hud = document.querySelector('#top')?.getBoundingClientRect()
-    const minTop = (hud ? hud.bottom - canvas.top : 54) + 6
-    this.fx.keepUnderHud(this.camera, canvas.height, minTop)
+    const canvas = this.viewRect
+    if (canvas.h < 2) return
+    this.fx.keepUnderHud(this.camera, canvas.h, canvas.hudBottom + 6)
   }
 
   private kill(enemy: Enemy): void {
@@ -1481,27 +1615,37 @@ export class Game {
     this.flyCoins(enemy.pos, 3)
     audio.play('boom')
     buzz('kill')
-    this.shake = Math.max(this.shake, enemy.kind === 'boss' ? 0.2 : 0.12)
+    this.shake = Math.min(0.06, Math.max(this.shake, enemy.kind === 'boss' ? 0.05 : 0.03))
     const carry = this.carries.find((item) => item.enemy === enemy)
     if (carry) this.rescue(carry)
     this.removeEnemy(enemy)
   }
 
   private removeEnemy(enemy: Enemy): void {
-    enemy.alive = false
-    this.scene.remove(enemy.group)
     const index = this.enemies.indexOf(enemy)
     if (index >= 0) this.enemies.splice(index, 1)
+    this.releaseEnemy(enemy)
   }
 
   private checkWaveClear(): void {
     if (this.phase !== 'wave') return
     if (this.spawnIndex < this.schedule.length) return
-    if (this.enemies.length > 0 || this.carries.length > 0) return
     if (this.livingPets() <= 0) {
       this.lose()
       return
     }
+    const more = this.waveIndex < this.level.waves.length - 1
+    if (more && this.level.id === 1) {
+      const cleared = this.waveIndex + 1
+      this.gold += clearBonus(cleared)
+      this.noteWave(cleared)
+      this.waveIndex += 1
+      this.phase = 'breather'
+      this.countdown = 3.2
+      this.advanceTutor('breather')
+      return
+    }
+    if (this.enemies.length > 0 || this.carries.length > 0) return
     const cleared = this.waveIndex + 1
     this.gold += clearBonus(cleared)
     this.noteWave(cleared)
@@ -1564,7 +1708,7 @@ export class Game {
     this.waveGate = Infinity
     this.spawnIndex = 0
     this.schedule = []
-    let time = 0.35
+    let time = this.level.id === 1 ? 0.12 : 0.35
     for (const group of this.level.waves[this.waveIndex].groups) {
       for (let i = 0; i < group.count; i++) {
         this.schedule.push({ time, kind: group.kind, entry: group.entry ?? 0, hpMul: group.hpMul ?? 1 })
@@ -1580,8 +1724,31 @@ export class Game {
     audio.unlock()
     audio.play('click')
     this.speedChoice = this.speedChoice === 1 ? 2 : 1
+    localStorage.setItem(SPEED_KEY, String(this.speedChoice))
     this.forcedScale = null
     this.refreshHud()
+  }
+
+  togglePause(): void {
+    if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') return
+    this.paused = !this.paused
+    if (this.paused) {
+      this.settingsOpen = false
+      perf.playing = false
+    }
+    audio.play('click')
+    this.refreshHud()
+  }
+
+  resume(): void {
+    this.paused = false
+    this.settingsOpen = false
+    this.refreshHud()
+  }
+
+  quit(): void {
+    this.paused = false
+    this.installLevel(this.level, 'title')
   }
 
   toggleMute(): void {
@@ -1605,13 +1772,43 @@ export class Game {
   }
 
   buy(x: number, z: number, part: string): boolean {
-    if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') return false
+    if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat' || this.paused) return false
     const cell = this.map.cells.get(cellKey(x, z))
     if (!cell) return false
+    if (isWeapon(part) && !this.towerAt(cell.x, cell.z)) return this.placeTower(cell, part)
     if (part === 'base') return this.placeBase(cell)
     if (part === 'sell') return this.sell(cell)
     if (part === 'upgrade') return this.buyUpgrade(cell)
     return this.buyPart(cell, part)
+  }
+
+  private placeTower(cell: MapCell, weapon: WeaponId): boolean {
+    if (cell.kind !== 'build') return false
+    if (this.towerAt(cell.x, cell.z)) return false
+    if (this.towers.length >= MAX_TOWERS) return false
+    const cost = WEAPONS[weapon].cost
+    if (this.gold < cost) return false
+    this.gold -= cost
+    const tower = new Tower(cell.x, cell.z)
+    tower.weapon = weapon
+    tower.spent = cost
+    tower.cooldown = 0.2
+    tower.rebuild(true)
+    this.towers.push(tower)
+    this.scene.add(tower.group)
+    this.selected = null
+    this.advanceTutor('base')
+    this.advanceTutor('weapon')
+    buzz('build')
+    audio.play('place')
+    audio.play('thud')
+    this.fx.burst(cell.x, 0.45, cell.z, 0xffe7a8, 14, 2.2)
+    this.shake = Math.min(0.06, Math.max(this.shake, 0.02))
+    this.touchBoard()
+    this.syncMarker()
+    this.syncSelection()
+    this.refreshHud()
+    return true
   }
 
   private placeBase(cell: MapCell): boolean {
@@ -1630,7 +1827,8 @@ export class Game {
     audio.play('place')
     audio.play('thud')
     this.fx.burst(cell.x, 0.3, cell.z, 0xe6d2a8, 12, 2)
-    this.shake = Math.max(this.shake, 0.04)
+    this.shake = Math.min(0.06, Math.max(this.shake, 0.02))
+    this.touchBoard()
     this.syncSelection()
     this.refreshHud()
     return true
@@ -1669,6 +1867,7 @@ export class Game {
       return false
     }
     tower.rebuild(true)
+    this.touchBoard()
     if (isWeapon(part)) this.advanceTutor('weapon')
     buzz('build')
     audio.play(part.startsWith('middle-') || part.startsWith('roof-') ? 'thud' : 'place')
@@ -1687,6 +1886,8 @@ export class Game {
     tower.spent += cost
     tower.tier += 1
     tower.rebuild(true)
+    this.touchBoard()
+    this.advanceTutor('upgrade')
     buzz('build')
     audio.play('thud')
     this.fx.burst(cell.x, 0.9, cell.z, 0xffd27a, 8, 2)
@@ -1703,6 +1904,7 @@ export class Game {
     this.gold += refund
     this.scene.remove(tower.group)
     this.towers.splice(index, 1)
+    this.touchBoard()
     audio.play('click')
     this.popText(cell.x, 0.8, cell.z, `+${refund}`, '#fff1b8')
     this.syncSelection()
@@ -1725,13 +1927,13 @@ export class Game {
   }
 
   private syncMarker(): void {
-    const show = this.tutorStep === 1 && this.towers.length === 0
-    this.hintMarker.visible = show
+    const pad = this.tutorStep === 4 ? this.towerAt(this.towers[0]?.x ?? -1, this.towers[0]?.z ?? -1) : null
+    const show = (this.tutorStep === 1 && this.towers.length === 0) || (this.tutorStep === 4 && !!this.towers[0])
+    this.hintMarker.visible = false
     this.padPulse.visible = show
     if (!show) return
-    const pad = this.coachPad()
-    this.hintMarker.position.set(pad.x, 1.05, pad.z)
-    this.padPulse.position.set(pad.x, 0.28, pad.z)
+    const spot = pad ? { x: pad.x, z: pad.z } : this.coachPad()
+    this.padPulse.position.set(spot.x, 0.28, spot.z)
   }
 
   private syncSelection(): void {
@@ -1756,114 +1958,62 @@ export class Game {
 
   private selectionView(): SelectionView | null {
     const cell = this.selected
-    if (!cell || this.phase === 'victory' || this.phase === 'defeat') return null
+    if (!cell || cell.kind !== 'build' || this.phase === 'victory' || this.phase === 'defeat' || this.paused) return null
+    const anchor = this.projectWorld(cell.x, 0.4, cell.z)
     const tower = this.towerAt(cell.x, cell.z)
     if (tower) {
       const stats = tower.stats()
-      const actions: ActionButton[] = []
-      const layers = tower.middles.length + (tower.roof ? 1 : 0)
       const nextTier = tower.tier >= MAX_UPGRADE ? null : UPGRADE_COST[tower.tier]
-      actions.push({
-        id: 'upgrade',
-        label: 'Upgrade',
-        effect: nextTier == null ? 'Maxed' : 'Next',
-        detail: 'Stronger shots. The weapon grows and the trim changes color.',
-        cost: nextTier == null ? 'Max' : String(nextTier),
-        enabled: nextTier != null && this.gold >= nextTier,
-        tone: 'yellow',
-      })
-      for (const id of ['a', 'b', 'c'] as MiddleId[]) {
-        const def = MIDDLES[id]
-        const cost = stackCost(def.cost, layers)
-        actions.push({
-          id: `middle-${id}`,
-          label: def.label,
-          effect: MIDDLE_EFFECT[id],
-          detail: def.blurb,
-          cost: String(cost),
-          enabled: this.gold >= cost && tower.middles.length < MAX_MIDDLES,
-          tone: 'blue',
-        })
-      }
-      for (const id of ['a', 'b', 'c'] as RoofId[]) {
-        const def = ROOFS[id]
-        const cost = stackCost(def.cost, layers)
-        actions.push({
-          id: `roof-${id}`,
-          label: def.label,
-          effect: ROOF_EFFECT[id],
-          detail: def.blurb,
-          cost: String(cost),
-          enabled: this.gold >= cost,
-          tone: 'yellow',
-        })
-      }
-      for (const id of ['ballista', 'cannon', 'catapult', 'turret'] as WeaponId[]) {
-        const def = WEAPONS[id]
-        actions.push({
-          id,
-          label: def.label,
-          effect: WEAPON_EFFECT[id],
-          detail: def.blurb,
-          cost: String(def.cost),
-          enabled: this.gold >= def.cost,
-          tone: 'green',
-        })
-      }
+      const layer = tower.tier >= MAX_UPGRADE ? 'Crown' : ['Mid', 'Top', 'Crown'][tower.tier] ?? 'Mid'
       const refund = Math.floor(tower.spent * SELL_RATIO)
-      actions.push({
-        id: 'sell',
-        label: 'Sell',
-        effect: 'Refund',
-        detail: 'Returns half of what this tower cost.',
-        cost: `+${refund}`,
-        enabled: true,
-        tone: 'red',
-      })
-      const weapon = tower.weapon ? WEAPONS[tower.weapon].label : 'No weapon'
-      const rate = stats.cooldown < 100 ? `${(1 / stats.cooldown).toFixed(1)}/s` : '—'
-      const pips = `${'●'.repeat(tower.tier)}${'○'.repeat(MAX_UPGRADE - tower.tier)}`
+      const weapon = tower.weapon ? WEAPONS[tower.weapon].label : 'Tower'
+      const actions: ActionButton[] = [
+        {
+          id: 'upgrade',
+          label: 'Upgrade',
+          effect: layer,
+          detail: 'Adds the next stack layer.',
+          cost: nextTier == null ? 'Max' : String(nextTier),
+          enabled: nextTier != null && this.gold >= nextTier,
+          tone: 'yellow',
+        },
+        {
+          id: 'sell',
+          label: 'Sell',
+          effect: 'Refund',
+          detail: 'Returns half of what this tower cost.',
+          cost: `+${refund}`,
+          enabled: true,
+          tone: 'red',
+        },
+      ]
       return {
-        title: 'Your tower',
+        title: weapon,
         blurb: '',
-        stats: `Range ${stats.range.toFixed(1)} · ${rate} · ${weapon}  ${pips}`,
+        stats: `Range ${stats.range.toFixed(1)}`,
         actions,
+        anchor,
       }
     }
-    if (cell.kind === 'build') {
+    const order: WeaponId[] = ['turret', 'cannon', 'catapult', 'ballista']
+    const actions: ActionButton[] = order.map((id) => {
+      const def = WEAPONS[id]
       return {
-        title: 'Open grass',
-        blurb: '',
-        stats:
-          this.towers.length >= MAX_TOWERS
-            ? `${MAX_TOWERS} towers already`
-            : `${this.towers.length}/${MAX_TOWERS} towers`,
-        actions: [
-          {
-            id: 'base',
-            label: 'Base',
-            effect: 'Place',
-            detail: 'The foot of a tower. Add a weapon or it will not fire.',
-            cost: String(BASE_COST),
-            enabled: this.gold >= BASE_COST && this.towers.length < MAX_TOWERS,
-            tone: 'green',
-          },
-        ],
+        id,
+        label: def.label,
+        effect: WEAPON_EFFECT[id],
+        detail: def.blurb,
+        cost: String(def.cost),
+        enabled: this.gold >= def.cost && this.towers.length < MAX_TOWERS,
+        tone: 'green',
       }
-    }
-    const titles: Record<MapCell['kind'], string> = {
-      path: 'Path',
-      spawn: 'UFO gate',
-      goal: 'Pet pen',
-      pen: 'Pet pen',
-      block: 'Blocked',
-      build: 'Grass',
-    }
+    })
     return {
-      title: titles[cell.kind],
+      title: 'Build',
       blurb: '',
-      stats: cell.kind === 'block' ? 'Not buildable' : 'UFOs fly this way',
-      actions: [],
+      stats: '',
+      actions,
+      anchor,
     }
   }
 
@@ -1925,7 +2075,8 @@ export class Game {
               }
             : null,
       title: this.titleView(),
-      coach: this.coachView(),
+      coach: this.handView(),
+      paused: this.paused,
       settingsOpen: this.settingsOpen,
       settings: this.settings,
       hapticsAvailable: typeof navigator.vibrate === 'function',
@@ -1934,102 +2085,47 @@ export class Game {
 
   private titleView() {
     if (this.phase !== 'title') return null
-    return LEVELS.map((level, index) => ({
+    return LEVELS.map((level) => ({
       id: level.id,
       name: level.name,
       blurb: level.blurb,
-      lock: index > 0 ? `Beat ${LEVELS[index - 1].name}` : '',
+      lock: level.id > 1 ? 'Coming soon' : '',
       stars: starsFor(level.id),
-      unlocked: levelUnlocked(level.id),
+      unlocked: level.id === 1 && levelUnlocked(level.id),
       selected: level.id === this.selectedLevel,
     }))
   }
 
-  private coachView(): {
-    text: string
-    target: { l: number; t: number; r: number; b: number }
-    avoid: Array<{ l: number; t: number; r: number; b: number }>
-    lane: Array<{ x: number; y: number }>
-    pin?: 'down' | 'up' | 'left' | 'right'
-  } | null {
-    if (this.tutorStep < 1 || this.tutorStep > 5 || this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') {
-      return null
-    }
-    const target = this.coachTarget()
-    if (!target) return null
-    const lane = this.map.points
-      .map((point) => this.projectWorld(point.x, 0.8, point.z))
-      .filter((point): point is { x: number; y: number } => !!point)
-    const pin = this.tutorStep === 2 || this.tutorStep === 5 ? 'down' : undefined
-    return { text: COACH[this.tutorStep], target, avoid: this.coachAvoid(), lane, pin }
-  }
-
-  private coachTarget(): { l: number; t: number; r: number; b: number } | null {
-    const rect = this.renderer.domElement.getBoundingClientRect()
-    const mid = { l: rect.left + rect.width * 0.5 - 18, t: rect.top + rect.height * 0.42, r: rect.left + rect.width * 0.5 + 18, b: rect.top + rect.height * 0.42 + 28 }
+  private handView(): HandView | null {
+    if (this.tutorStep < 1 || this.tutorStep > 5 || this.paused) return null
+    if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') return null
+    const text = HAND[this.tutorStep] ?? ''
     if (this.tutorStep === 1) {
       const pad = this.coachPad()
-      return this.worldBox(pad.x, pad.z, 0.2, 26) ?? mid
+      const point = this.projectWorld(pad.x, 0.7, pad.z)
+      if (!point) return null
+      return { text, x: point.x, y: point.y, part: null }
     }
-    if (this.tutorStep === 2) {
-      return this.clientBox(this.weaponButton()) ?? mid
-    }
-    if (this.tutorStep === 3) return this.clientBox(document.querySelector('#preview')) ?? mid
+    if (this.tutorStep === 2) return { text, x: 0, y: 0, part: 'turret' }
+    if (this.tutorStep === 3) return { text, x: 0, y: 0, part: 'start' }
     if (this.tutorStep === 4) {
-      const index = Math.max(2, Math.floor(this.map.points.length * 0.42))
-      const spot = this.map.points[Math.min(index, this.map.points.length - 2)]
-      return this.worldBox(spot.x, spot.z, 1.1, 22) ?? mid
+      const tower = this.towers[0]
+      if (!tower) return null
+      const point = this.projectWorld(tower.x, 0.8, tower.z)
+      if (!point) return null
+      return { text, x: point.x, y: point.y, part: null }
     }
-    return this.clientBox(document.querySelector('#start')) ?? mid
-  }
-
-  private weaponButton(): Element | null {
-    for (const id of ['turret', 'ballista', 'cannon', 'catapult']) {
-      const node = document.querySelector(`[data-part="${id}"]`)
-      if (node) return node
-    }
-    return null
-  }
-
-  private coachAvoid(): Array<{ l: number; t: number; r: number; b: number }> {
-    const boxes: Array<{ l: number; t: number; r: number; b: number } | null> = []
-    boxes.push(this.clientBox(document.querySelector('#top')))
-    if (this.tutorStep === 2) {
-      boxes.push(this.clientBox(document.querySelector('#preview')))
-      boxes.push(this.clientBox(document.querySelector('#card-title')))
-    }
-    if (this.tutorStep === 4) {
-      const spawn = this.map.points[1] ?? this.map.points[0]
-      boxes.push(this.worldBox(spawn.x, spawn.z, 1.2, 56))
-      boxes.push(this.clientBox(document.querySelector('#preview')))
-    }
-    if (this.tutorStep === 3) {
-      boxes.push(this.clientBox(document.querySelector('#preview')))
-    }
-    return boxes.filter((box): box is { l: number; t: number; r: number; b: number } => !!box)
-  }
-
-  private clientBox(node: Element | null): { l: number; t: number; r: number; b: number } | null {
-    if (!(node instanceof HTMLElement) || node.hidden) return null
-    const box = node.getBoundingClientRect()
-    if (box.width < 2 || box.height < 2) return null
-    return { l: box.left, t: box.top, r: box.right, b: box.bottom }
-  }
-
-  private worldBox(x: number, z: number, y: number, pad: number): { l: number; t: number; r: number; b: number } | null {
-    const point = this.projectWorld(x, y, z)
-    if (!point) return null
-    return { l: point.x - pad, t: point.y - pad, r: point.x + pad, b: point.y + pad }
+    return { text, x: 0, y: 0, part: 'upgrade' }
   }
 
   private projectWorld(x: number, y: number, z: number): { x: number; y: number } | null {
     this.camera.updateMatrixWorld()
     _v.set(x, y, z).project(this.camera)
     if (_v.z > 1) return null
-    const rect = this.renderer.domElement.getBoundingClientRect()
+    const rect = this.viewRect
     return {
-      x: (_v.x * 0.5 + 0.5) * rect.width + rect.left,
-      y: (-_v.y * 0.5 + 0.5) * rect.height + rect.top,
+      x: (_v.x * 0.5 + 0.5) * rect.w + rect.left,
+      y: (-_v.y * 0.5 + 0.5) * rect.h + rect.top,
     }
   }
 
@@ -2121,10 +2217,7 @@ export class Game {
     audio.apply(next.sound, next.music)
     if (patch.quality === 'low') this.applyTier('low')
     else if (patch.quality === 'high') this.applyTier('high')
-    else if (patch.quality === 'auto') {
-      this.slowAccum = 0
-      this.applyTier(detectTier())
-    }
+    else if (patch.quality === 'auto') this.applyTier(detectTier())
     this.refreshHud()
   }
 
@@ -2164,8 +2257,8 @@ export class Game {
     this.spawned = 0
     this.schedule = []
     this.spawnIndex = 0
-    this.speedChoice = 1
     this.forcedScale = null
+    this.paused = false
     this.selected = null
     this.settingsOpen = false
     this.userCam = false
@@ -2177,27 +2270,53 @@ export class Game {
     this.tutorStep = mode === 'play' && level.id === 1 && !tutorialSeen() ? 1 : 0
     audio.duck(false)
     this.spawnPets()
+    this.markPads()
     this.syncMarker()
     this.syncSelection()
     if (mode === 'title') this.refreshHud()
     this.applyFraming(true)
+    this.touchBoard()
     if (mode !== 'title') this.refreshHud()
+  }
+
+  private markPads(): void {
+    for (const glow of this.padGlows) this.scene.remove(glow)
+    this.padGlows = []
+    for (const cell of this.map.cells.values()) {
+      if (cell.kind !== 'build') continue
+      const disc = new THREE.Mesh(this.discGeo, this.discMat)
+      disc.rotation.x = -Math.PI / 2
+      disc.position.set(cell.x, 0.08, cell.z)
+      disc.receiveShadow = true
+      disc.castShadow = false
+      const ring = new THREE.Mesh(this.padGeo, this.padGlowMat)
+      ring.rotation.x = -Math.PI / 2
+      ring.position.set(cell.x, 0.12, cell.z)
+      ring.castShadow = false
+      this.scene.add(disc)
+      this.scene.add(ring)
+      this.padGlows.push(disc, ring)
+      const pick = this.map.picks.find((mesh) => mesh.userData.cell === cell)
+      if (pick) pick.scale.setScalar(1.45)
+    }
   }
 
   private clearActors(): void {
     for (const tower of this.towers) this.scene.remove(tower.group)
-    for (const enemy of this.enemies) this.scene.remove(enemy.group)
+    for (const enemy of this.enemies) this.releaseEnemy(enemy)
     for (const proj of this.projectiles) this.scene.remove(proj.mesh)
     for (const pooled of this.ammoPools.values()) {
       for (const mesh of pooled) this.scene.remove(mesh)
     }
     for (const pet of this.pets) this.scene.remove(pet.group)
     for (const carry of this.carries) {
-      this.scene.remove(carry.beam)
-      this.scene.remove(carry.burst)
-      this.scene.remove(carry.glow)
-      this.scene.remove(carry.icon)
+      carry.beam.visible = false
+      carry.burst.visible = false
+      carry.glow.visible = false
+      if (carry.enemy) carry.enemy.badge.visible = false
     }
+    for (const glow of this.padGlows) this.scene.remove(glow)
+    this.padGlows = []
     this.towers = []
     this.enemies = []
     this.pets = []
@@ -2208,20 +2327,19 @@ export class Game {
     this.pending = []
   }
 
-  private advanceTutor(reason: 'base' | 'weapon' | 'wave' | 'rescue' | 'early' | 'next' | 'breather'): void {
+  private advanceTutor(reason: 'base' | 'weapon' | 'wave' | 'rescue' | 'early' | 'next' | 'breather' | 'pad' | 'tower' | 'upgrade'): void {
     if (this.tutorStep <= 0) return
     const step = this.tutorStep
     const match =
       reason === 'next' ||
-      (step === 1 && reason === 'base') ||
+      (step === 1 && (reason === 'pad' || reason === 'base')) ||
       (step === 2 && reason === 'weapon') ||
       (step === 3 && reason === 'wave') ||
-      (step === 4 && (reason === 'rescue' || reason === 'breather')) ||
-      (step === 5 && (reason === 'early' || reason === 'wave'))
+      (step === 4 && reason === 'tower') ||
+      (step === 5 && reason === 'upgrade')
     if (!match) return
-    const leaving = this.tutorStep
     this.tutorStep += 1
-    if (leaving === 2) this.selected = null
+    if (this.tutorStep === 3) this.countdown = 2.6
     if (this.tutorStep > 5) {
       this.tutorStep = 0
       markTutorial()
@@ -2277,6 +2395,9 @@ export class Game {
         fps: Math.round(this.fps),
         draws: this.renderer.info.render.calls,
         zoom: Math.round(this.distance * 10) / 10,
+        targetX: Math.round(this.target.x * 100) / 100,
+        targetZ: Math.round(this.target.z * 100) / 100,
+        paused: this.paused,
         board: this.boardSpan(),
         level: this.level.id,
         pads: this.level.pads.map((pad) => [pad[0], pad[1]]),
@@ -2405,6 +2526,8 @@ export class Game {
         this.refreshHud()
       },
       iconUrl: () => this.iconUrl,
+      perf: () => perf.snapshot(this.renderer),
+      pause: () => this.togglePause(),
     }
   }
 }
