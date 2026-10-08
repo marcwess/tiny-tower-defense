@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { contactShadow, spawnModel } from './assets'
 import { COLS, ROWS } from './config'
 import { levelById, type LevelDef } from './levels'
-import { validatePath, waypoints, type PathTile, type XZ } from './pathing'
+import { openings, validatePath, waypoints, type PathTile, type XZ } from './pathing'
 
 export type CellKind = 'path' | 'build' | 'block' | 'spawn' | 'goal' | 'pen'
 
@@ -28,6 +28,16 @@ export interface BuiltMap {
 
 export function cellKey(x: number, z: number): string {
   return `${x},${z}`
+}
+
+/**
+ * The kit bridge deck runs along local +X, across the rot-0 opening axis.
+ * Point that deck down the path so the rails sit on either side of the crossing.
+ */
+function tileYaw(cell: MapCell): number {
+  if (!cell.model.includes('bridge')) return cell.rot * (Math.PI / 2)
+  const [dx, dz] = openings(cell.model, cell.rot)[0]
+  return Math.atan2(-dz, dx)
 }
 
 export function buildMap(level: LevelDef = levelById(1)): BuiltMap {
@@ -69,7 +79,7 @@ export function buildMap(level: LevelDef = levelById(1)): BuiltMap {
   for (const cell of cells.values()) {
     const mesh = spawnModel(cell.model)
     mesh.position.set(cell.x, 0, cell.z)
-    mesh.rotation.y = cell.rot * (Math.PI / 2)
+    mesh.rotation.y = tileYaw(cell)
     if (cell.model.includes('river') && level.biome !== 'snow') {
       const water = makeWater(cell.model.includes('bridge'), waterMaps)
       water.userData.keep = true
