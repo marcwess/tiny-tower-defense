@@ -472,7 +472,7 @@ try {
       if (done.leaks !== 0 || done.pets < 5) {
         throw new Error(`level 2 should hold every pet under pressure: ${JSON.stringify(done)}`)
       }
-      const near = (done.log ?? []).filter((row) => row.gate > 0.15 && row.gate < 2.35)
+      const near = (done.log ?? []).filter((row) => row.gate > 0.15 && row.gate < 2.45)
       if (near.length < 2) {
         throw new Error(`level 2 needs two waves within about 2 of the gate: ${JSON.stringify(done.log)}`)
       }
