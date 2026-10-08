@@ -29,7 +29,7 @@ Before, 30 seconds of combat on that build:
 
 After, three Meadow waves in headless Chromium with damage numbers on (`scripts/perf-probe.mjs`, phone-sized viewport, DPR 2):
 
-- Live geometries stayed at 95, textures at 198, and programs at 17 from wave 1 through the wave 4 breather. The 17th program is the muzzle-flash sprite, compiled once during warmup.
+- Live geometries stayed at 96, textures at 198, and programs at 17 from wave 1 through the wave 4 breather. The extra geometry is the shared frost ring, created at warmup. The 17th program is the muzzle-flash sprite, compiled once during warmup.
 - Canvas resizes during play: 0. Shader compiles during play: 0. The only resize is the first layout, before the wave.
 - Texture uploads per second in combat: 0 (max and average). `playUploads` stayed 0.
 - Tier stayed High. No automatic tier change.
