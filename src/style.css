@@ -137,13 +137,14 @@ html, body, #app {
 
 #dock {
   width: min(820px, 100%);
-  margin: auto auto 0;
+  margin-top: auto;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   gap: 6px;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: 100%;
 }
 
 #hint, #preview {
