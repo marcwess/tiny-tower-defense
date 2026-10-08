@@ -4,7 +4,7 @@ One level, built to feel good in the hand. Levels 2 and 3 stay loadable and show
 
 ## Feel
 
-- Tap a stone pad for a radial build menu: Turret, Cannon, Frost, Ballista. Tap a tower to upgrade or sell, with a range ring. Tap elsewhere to cancel.
+- Tap a stone pad for a radial build menu: Turret, Cannon, Frost, Ballista. The menu shifts inward so every button stays on a phone screen. Tap a tower to upgrade or sell, with a range ring. Tap elsewhere to cancel.
 - Each upgrade adds a visible stack layer (mid, top, crown) and a short build pop.
 - Meadow waves start within a few seconds, overlap, and can run at 2×. The speed choice is remembered.
 - UFOs and pets are larger, hits flash and wobble, kills burst, and the camera sits closer to the path.

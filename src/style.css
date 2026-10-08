@@ -440,9 +440,10 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
   position: absolute;
   left: 0;
   top: 0;
-  width: 64px;
-  height: 64px;
-  margin: -32px 0 0 -32px;
+  width: 72px;
+  height: 68px;
+  margin: -34px 0 0 -36px;
+  overflow: hidden;
   border: 0;
   border-radius: 18px;
   padding: 4px 4px 2px;
@@ -459,6 +460,7 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
   line-height: 1.05;
 }
 
+.radial-name { font-size: 10px; line-height: 1; max-width: 68px; }
 .radial-btn img {
   width: 28px;
   height: 28px;

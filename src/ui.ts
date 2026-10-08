@@ -501,8 +501,34 @@ export class Hud {
       return
     }
     this.radialEl.hidden = false
-    this.radialEl.style.left = `${selection.anchor.x}px`
-    this.radialEl.style.top = `${selection.anchor.y}px`
+    const count = selection.actions.length
+    const spread = count <= 2 ? 1.15 : 0.72
+    const radius = count <= 2 ? 74 : 86
+    const half = 40
+    const margin = 8
+    let minX = 0
+    let maxX = 0
+    let minY = 0
+    let maxY = 0
+    selection.actions.forEach((_, index) => {
+      const angle = -Math.PI / 2 + (index - (count - 1) / 2) * spread
+      const x = Math.cos(angle) * radius
+      const y = Math.sin(angle) * radius
+      minX = Math.min(minX, x - half)
+      maxX = Math.max(maxX, x + half)
+      minY = Math.min(minY, y - half)
+      maxY = Math.max(maxY, y + half)
+    })
+    const viewW = window.innerWidth
+    const viewH = window.innerHeight
+    let originX = selection.anchor.x
+    let originY = selection.anchor.y
+    if (originX + minX < margin) originX = margin - minX
+    if (originX + maxX > viewW - margin) originX = viewW - margin - maxX
+    if (originY + minY < margin) originY = margin - minY
+    if (originY + maxY > viewH - 96) originY = viewH - 96 - maxY
+    this.radialEl.style.left = `${originX}px`
+    this.radialEl.style.top = `${originY}px`
     this.actions = selection.actions
     const sig = selection.actions.map((action) => action.id).join('|')
     if (sig !== this.signature) {
@@ -514,10 +540,7 @@ export class Hud {
         button.type = 'button'
         button.dataset.part = action.id
         button.className = `radial-btn ${action.tone}`
-        const count = selection.actions.length
-        const spread = count <= 2 ? 1.15 : 0.72
         const angle = -Math.PI / 2 + (index - (count - 1) / 2) * spread
-        const radius = count <= 2 ? 74 : 86
         button.style.left = `${Math.cos(angle) * radius}px`
         button.style.top = `${Math.sin(angle) * radius}px`
         const thumb = action.id === 'upgrade' || action.id === 'sell' ? '' : pieceThumbnail(action.id)
