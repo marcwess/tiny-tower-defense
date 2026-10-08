@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { arrowTexture, heartTexture, loadAssets, renderPieceThumbnails, spawnModel } from './assets'
+import { arrowTexture, heartTexture, loadAssets, renderAppIcon, renderPieceThumbnails, spawnModel } from './assets'
 import { audio } from './audio'
 import {
   BASE_COST,
@@ -81,6 +81,7 @@ interface WaveRow {
   rescues: number
   abductions: number
   came: string
+  gate: number
 }
 
 type Phase = 'title' | 'ready' | 'wave' | 'breather' | 'victory' | 'defeat'
@@ -176,10 +177,10 @@ function snowSkyTexture(): THREE.CanvasTexture {
   const ctx = canvas.getContext('2d')
   if (ctx) {
     const g = ctx.createLinearGradient(0, 0, 0, 256)
-    g.addColorStop(0, '#8eb8dc')
-    g.addColorStop(0.4, '#d5e7f6')
-    g.addColorStop(0.72, '#f4f7fb')
-    g.addColorStop(1, '#e7eef6')
+    g.addColorStop(0, '#6e9fd0')
+    g.addColorStop(0.42, '#c5dff2')
+    g.addColorStop(0.75, '#e7f3fb')
+    g.addColorStop(1, '#d5e6f4')
     ctx.fillStyle = g
     ctx.fillRect(0, 0, 4, 256)
   }
@@ -274,8 +275,18 @@ export class Game {
   private allowDowngrade = true
   private sun!: THREE.DirectionalLight
   private hemi!: THREE.HemisphereLight
+  private ambient!: THREE.AmbientLight
+  private rim!: THREE.DirectionalLight
+  private fill!: THREE.DirectionalLight
   private skyGrass: THREE.Texture
   private skySnow: THREE.Texture
+  private snowPoints: THREE.Points | null = null
+  private snowFall: number[] = []
+  private titleSpin = 0
+  private waveGate = Infinity
+  private runGate = Infinity
+  private iconUrl = ''
+  private padPulse: THREE.Mesh
   private ammoPools = new Map<string, THREE.Object3D[]>()
   private freeProjectiles: Projectile[] = []
 
@@ -306,7 +317,8 @@ export class Game {
 
     this.scene.background = this.skyGrass
     this.scene.fog = new THREE.Fog(0xf6e2c8, 42, 82)
-    this.scene.add(new THREE.AmbientLight(0xfff1df, 0.3))
+    this.ambient = new THREE.AmbientLight(0xfff1df, 0.3)
+    this.scene.add(this.ambient)
     this.hemi = new THREE.HemisphereLight(0xfff4e4, 0x5c8644, 0.4)
     this.scene.add(this.hemi)
     this.sun = new THREE.DirectionalLight(0xffd89a, 2.45)
@@ -324,12 +336,12 @@ export class Game {
     this.scene.add(this.sun)
     this.scene.add(this.sun.target)
     this.applyTier(this.tier)
-    const rim = new THREE.DirectionalLight(0xffb15a, 0.72)
-    rim.position.set(-8, 4.5, 10)
-    this.scene.add(rim)
-    const fill = new THREE.DirectionalLight(0xc5e4ff, 0.08)
-    fill.position.set(-6, 5, -4)
-    this.scene.add(fill)
+    this.rim = new THREE.DirectionalLight(0xffb15a, 0.72)
+    this.rim.position.set(-8, 4.5, 10)
+    this.scene.add(this.rim)
+    this.fill = new THREE.DirectionalLight(0xc5e4ff, 0.08)
+    this.fill.position.set(-6, 5, -4)
+    this.scene.add(this.fill)
 
     this.highlight = new THREE.Mesh(
       new THREE.RingGeometry(0.38, 0.5, 32),
@@ -365,6 +377,20 @@ export class Game {
     this.hintMarker.scale.set(0.46, 0.46, 1)
     this.hintMarker.visible = false
     this.scene.add(this.hintMarker)
+
+    this.padPulse = new THREE.Mesh(
+      new THREE.RingGeometry(0.46, 0.62, 28),
+      new THREE.MeshBasicMaterial({
+        color: 0xffb15a,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    )
+    this.padPulse.rotation.x = -Math.PI / 2
+    this.padPulse.visible = false
+    this.scene.add(this.padPulse)
   }
 
   async init(): Promise<void> {
@@ -375,6 +401,7 @@ export class Game {
       this.hud.setLoading(`Raising the meadow… ${Math.round(ratio * 100)}%`)
     })
     renderPieceThumbnails()
+    this.iconUrl = renderAppIcon()
     const arrow = await arrowTexture()
     ;(this.hintMarker.material as THREE.SpriteMaterial).map = arrow
     const capture = new URLSearchParams(location.search).has('capture')
@@ -413,28 +440,100 @@ export class Game {
       this.sun.shadow.map?.dispose()
       this.sun.shadow.map = null
     }
+    this.ensureSnow()
     if (this.renderer.domElement.isConnected) this.resize()
   }
 
   private applyBiome(biome: 'grass' | 'snow'): void {
     const fog = this.scene.fog as THREE.Fog
     if (biome === 'snow') {
-      fog.color.set(0xd7e7f4)
-      this.hemi.color.set(0xe8f4ff)
-      this.hemi.groundColor.set(0x7f97a8)
+      fog.color.set(0xd4e6f8)
+      fog.near = 46
+      fog.far = 88
+      this.ambient.color.set(0xeaf3ff)
+      this.ambient.intensity = 0.38
+      this.hemi.color.set(0xd6eaff)
+      this.hemi.groundColor.set(0x6d8eae)
+      this.hemi.intensity = 0.48
+      this.sun.color.set(0xf7fbff)
+      this.sun.intensity = 5.4
+      this.rim.color.set(0xb7d2ff)
+      this.rim.intensity = 0.28
+      this.fill.color.set(0x8ebfff)
+      this.fill.intensity = 0.34
+      this.renderer.toneMappingExposure = 1.55
       this.scene.background = this.skySnow
-      return
+    } else {
+      fog.color.set(0xf6e2c8)
+      fog.near = 42
+      fog.far = 82
+      this.ambient.color.set(0xfff1df)
+      this.ambient.intensity = 0.3
+      this.hemi.color.set(0xfff4e4)
+      this.hemi.groundColor.set(0x5c8644)
+      this.hemi.intensity = 0.4
+      this.sun.color.set(0xffd89a)
+      this.sun.intensity = 2.45
+      this.rim.color.set(0xffb15a)
+      this.rim.intensity = 0.72
+      this.fill.color.set(0xc5e4ff)
+      this.fill.intensity = 0.08
+      this.renderer.toneMappingExposure = 1.02
+      this.scene.background = this.skyGrass
     }
-    fog.color.set(0xf6e2c8)
-    this.hemi.color.set(0xfff4e4)
-    this.hemi.groundColor.set(0x5c8644)
-    this.scene.background = this.skyGrass
+    this.ensureSnow()
+  }
+
+  /** Falling snow is pooled and only drawn on the high tier. */
+  private ensureSnow(): void {
+    const on = this.tier === 'high' && this.level.biome === 'snow'
+    if (!this.snowPoints) {
+      const count = 180
+      const arr = new Float32Array(count * 3)
+      this.snowFall = []
+      for (let i = 0; i < count; i++) {
+        arr[i * 3] = -1.2 + Math.random() * 8.4
+        arr[i * 3 + 1] = 0.4 + Math.random() * 4.6
+        arr[i * 3 + 2] = -1.2 + Math.random() * 12.4
+        this.snowFall.push(0.0035 + Math.random() * 0.007)
+      }
+      const geo = new THREE.BufferGeometry()
+      geo.setAttribute('position', new THREE.BufferAttribute(arr, 3))
+      this.snowPoints = new THREE.Points(
+        geo,
+        new THREE.PointsMaterial({
+          color: 0xf7fbff,
+          size: 0.13,
+          transparent: true,
+          opacity: 0.9,
+          depthWrite: false,
+          sizeAttenuation: true,
+        }),
+      )
+      this.snowPoints.frustumCulled = false
+      this.scene.add(this.snowPoints)
+    }
+    this.snowPoints.visible = on
+  }
+
+  private tickSnow(): void {
+    const points = this.snowPoints
+    if (!points?.visible) return
+    const attr = points.geometry.getAttribute('position') as THREE.BufferAttribute
+    const arr = attr.array as Float32Array
+    for (let i = 0; i < this.snowFall.length; i++) {
+      arr[i * 3 + 1] -= this.snowFall[i]
+      if (arr[i * 3 + 1] < 0.15) arr[i * 3 + 1] = 4.8
+      arr[i * 3] += Math.sin(this.visualTime * 0.7 + i) * 0.0015
+    }
+    attr.needsUpdate = true
   }
 
   private resize(): void {
     const width = this.app.clientWidth || window.innerWidth
     const height = this.app.clientHeight || window.innerHeight
-    this.camera.aspect = width / Math.max(1, height)
+    if (width < 2 || height < 2) return
+    this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
     this.renderer.setSize(width, height, false)
     this.renderer.domElement.style.width = `${width}px`
@@ -443,8 +542,8 @@ export class Game {
   }
 
   /**
-   * Portrait turns the board so the UFO route runs down the screen and the pet
-   * pen stays above the bottom bar. Wider screens keep the closer three-quarter view.
+   * Fit the board, the path, the spawn lead-in, and the pen inside the HUD
+   * and the bottom bar. Portrait and desktop share the same fit.
    */
   private framing(): {
     fov: number
@@ -456,14 +555,115 @@ export class Game {
     ty: number
     tz: number
   } {
-    const aspect = this.camera.aspect
-    if (aspect < 0.62) {
-      return { fov: 42, pitch: 0.76, distance: 20.2, azimuth: 2.8, lookY: 0.25, tx: 2.6, ty: 0.2, tz: 4.7 }
+    const aspect = this.camera.aspect || 1
+    const pose =
+      aspect < 0.62
+        ? { fov: 42, pitch: 1.08, azimuth: 2.85, lookY: 0.12 }
+        : aspect < 1.05
+          ? { fov: 36, pitch: 0.86, azimuth: 2.42, lookY: 0.12 }
+          : { fov: 30, pitch: 0.78, azimuth: 2.28, lookY: 0.08 }
+    if (!this.map) {
+      const distance = aspect < 0.62 ? 20.2 : aspect < 1.05 ? 18.4 : 14.5
+      return { ...pose, distance, tx: 3, ty: 0.15, tz: 5 }
     }
-    if (aspect < 1.05) {
-      return { fov: 38, pitch: 0.74, distance: 18.4, azimuth: 2.5, lookY: 0.18, tx: 3.0, ty: 0.12, tz: 4.8 }
+    const solved = this.solveFrame(pose)
+    return { ...pose, distance: solved.distance, tx: solved.tx, ty: 0.12, tz: solved.tz }
+  }
+
+  private viewInsets(): { w: number; h: number; l: number; t: number; r: number; b: number } {
+    const w = this.app.clientWidth || window.innerWidth
+    const h = this.app.clientHeight || window.innerHeight
+    const aspect = w / Math.max(1, h)
+    const top = aspect < 0.7 ? 100 : aspect < 1.15 ? 88 : 118
+    const bottom = aspect < 0.7 ? 136 : aspect < 1.15 ? 108 : 156
+    const side = aspect < 0.7 ? 18 : aspect < 1.15 ? 20 : 36
+    return { w, h, l: side, t: top, r: w - side, b: h - bottom }
+  }
+
+  private framePoints(): THREE.Vector3[] {
+    const pts: THREE.Vector3[] = []
+    const add = (x: number, y: number, z: number) => pts.push(new THREE.Vector3(x, y, z))
+    // The plinth is wider than the tiles. Fit its rim so the board edge stays on screen.
+    for (const x of [-0.95, 6.95]) {
+      for (const z of [-0.85, 10.95]) add(x, 0.2, z)
     }
-    return { fov: 30, pitch: 0.72, distance: 12.2, azimuth: 2.25, lookY: 0.12, tx: 3.15, ty: 0.08, tz: 4.9 }
+    for (const point of this.map.points) add(point.x, 0.9, point.z)
+    for (const pet of this.level.pets) add(pet.x, 0.45, pet.z)
+    return pts
+  }
+
+  private overflowAt(
+    distance: number,
+    tx: number,
+    tz: number,
+    pose: { fov: number; pitch: number; azimuth: number; lookY: number },
+    points: THREE.Vector3[],
+    safe: { w: number; h: number; l: number; t: number; r: number; b: number },
+  ): number {
+    const cam = this.camera
+    cam.fov = pose.fov
+    cam.aspect = safe.w / Math.max(1, safe.h)
+    cam.updateProjectionMatrix()
+    const horiz = Math.cos(pose.pitch) * distance
+    cam.position.set(tx + Math.sin(pose.azimuth) * horiz, Math.sin(pose.pitch) * distance, tz + Math.cos(pose.azimuth) * horiz)
+    cam.lookAt(tx, pose.lookY, tz)
+    cam.updateMatrixWorld()
+    let overflow = 0
+    for (const point of points) {
+      _v.copy(point).project(cam)
+      if (_v.z > 1) {
+        overflow += 400
+        continue
+      }
+      const x = (_v.x * 0.5 + 0.5) * safe.w
+      const y = (-_v.y * 0.5 + 0.5) * safe.h
+      overflow += Math.max(0, safe.l - x) + Math.max(0, x - safe.r) + Math.max(0, safe.t - y) + Math.max(0, y - safe.b)
+    }
+    return overflow
+  }
+
+  private solveFrame(pose: { fov: number; pitch: number; azimuth: number; lookY: number }): {
+    distance: number
+    tx: number
+    tz: number
+  } {
+    const points = this.framePoints()
+    const safe = this.viewInsets()
+    let cx = 0
+    let cz = 0
+    for (const point of this.map.points) {
+      cx += point.x
+      cz += point.z
+    }
+    cx /= Math.max(1, this.map.points.length)
+    cz /= Math.max(1, this.map.points.length)
+    let bestDist = 22
+    let bestX = THREE.MathUtils.clamp(cx, 1.2, 4.8)
+    let bestZ = THREE.MathUtils.clamp(cz, 2.2, 7.6)
+    let bestOver = Infinity
+    for (const ox of [-1.1, -0.45, 0, 0.45, 1.1]) {
+      for (const oz of [-1.4, -0.5, 0.3, 1.1]) {
+        const tx = THREE.MathUtils.clamp(cx + ox, 1.1, 4.9)
+        const tz = THREE.MathUtils.clamp(cz + oz, 1.8, 8.2)
+        let lo = 9
+        let hi = 46
+        for (let i = 0; i < 9; i++) {
+          const mid = (lo + hi) / 2
+          const over = this.overflowAt(mid, tx, tz, pose, points, safe)
+          if (over <= 0.75) hi = mid
+          else lo = mid
+        }
+        const over = this.overflowAt(hi, tx, tz, pose, points, safe)
+        const tighter = over < bestOver - 0.5 || (Math.abs(over - bestOver) <= 0.5 && hi < bestDist)
+        if (tighter) {
+          bestOver = over
+          bestDist = hi
+          bestX = tx
+          bestZ = tz
+        }
+      }
+    }
+    return { distance: bestDist, tx: bestX, tz: bestZ }
   }
 
   private applyFraming(resetView: boolean): void {
@@ -483,7 +683,7 @@ export class Game {
   private clampCamera(): void {
     this.target.x = THREE.MathUtils.clamp(this.target.x, 0.2, 5.8)
     this.target.z = THREE.MathUtils.clamp(this.target.z, 0.2, 9.8)
-    this.distance = THREE.MathUtils.clamp(this.distance, 4.2, 34)
+    this.distance = THREE.MathUtils.clamp(this.distance, 4.2, 46)
   }
 
   private updateCamera(): void {
@@ -494,7 +694,7 @@ export class Game {
     }
     const horiz = Math.cos(this.pitch) * this.distance
     const bob = Math.sin(performance.now() * 0.04) * this.shake
-    const orbit = this.phase === 'title' && !this.userCam ? this.visualTime * 0.18 : 0
+    const orbit = this.phase === 'title' && !this.userCam ? this.titleSpin : 0
     const azimuth = this.azimuth + orbit
     this.camera.position.set(
       this.target.x + Math.sin(azimuth) * horiz + bob,
@@ -646,7 +846,9 @@ export class Game {
       guard += 1
     }
     this.visualTime += raw
+    if (this.phase === 'title') this.titleSpin += raw * 0.18
     if (this.map) tickDiorama(this.map, this.visualTime)
+    this.tickSnow()
     this.updateCamera()
     for (const enemy of this.enemies) enemy.billboard(this.camera)
     this.renderer.render(this.scene, this.camera)
@@ -673,6 +875,7 @@ export class Game {
       const escaped: Enemy[] = []
       for (const enemy of this.enemies) {
         const step = enemy.update(dt, this.map.points, this.time)
+        if (enemy.carrying) this.trackGate(enemy)
         if (step === 'arrived') arrived.push(enemy)
         if (step === 'escaped') escaped.push(enemy)
       }
@@ -694,7 +897,12 @@ export class Game {
     for (const tower of this.towers) tower.update(dt)
     this.fx.update(dt)
     if (this.hintMarker.visible) {
-      this.hintMarker.position.y = 1.15 + Math.sin(this.time * 4) * 0.1
+      this.hintMarker.position.y = 1.05 + Math.sin(this.time * 4) * 0.1
+    }
+    if (this.padPulse.visible) {
+      const pulse = 1 + Math.sin(this.time * 5) * 0.14
+      this.padPulse.scale.setScalar(pulse)
+      ;(this.padPulse.material as THREE.MeshBasicMaterial).opacity = 0.55 + Math.sin(this.time * 5) * 0.35
     }
     this.refreshHud()
   }
@@ -744,7 +952,7 @@ export class Game {
       this.scene.remove(carry.pet.group)
       this.leaks += 1
       this.dropCarry(carry)
-      this.fx.popup(enemy.pos.x, enemy.pos.y + 0.4, enemy.pos.z, 'Lost!', '#ffb0a8', 1.1)
+      this.popText(enemy.pos.x, enemy.pos.y + 0.4, enemy.pos.z, 'Lost!', '#ffb0a8', 1.1)
     }
     this.removeEnemy(enemy)
     if (this.livingPets() <= 0) this.lose()
@@ -868,7 +1076,7 @@ export class Game {
     audio.play('cheer')
     buzz('rescue')
     this.advanceTutor('rescue')
-    this.fx.popup(enemy.pos.x, enemy.pos.y + 0.55, enemy.pos.z, 'Saved!', '#b8ffb0', 1.15)
+    this.popText(enemy.pos.x, enemy.pos.y + 0.55, enemy.pos.z, 'Saved!', '#b8ffb0', 1.15)
     this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xd8ffe4, 10, 2.2)
     this.shake = Math.max(this.shake, 0.08)
   }
@@ -1060,7 +1268,7 @@ export class Game {
     const effective = mod.effective || (hadShield && mod.shield >= 1.8)
     if (effective) this.popEffective(enemy)
     if (this.showDamage && amount >= 1) {
-      this.fx.popup(enemy.pos.x + 0.15, enemy.pos.y + 0.45, enemy.pos.z, String(Math.round(amount)), '#fff6ea', 0.7)
+      this.popText(enemy.pos.x + 0.15, enemy.pos.y + 0.45, enemy.pos.z, String(Math.round(amount)), '#fff6ea', 0.7)
     }
     return { killed, effective }
   }
@@ -1069,7 +1277,7 @@ export class Game {
     const last = this.effectiveAt.get(enemy.id) ?? -10
     if (this.time - last < 0.55) return
     this.effectiveAt.set(enemy.id, this.time)
-    this.fx.popup(enemy.pos.x, enemy.pos.y + 1.15, enemy.pos.z, 'Effective!', '#b6ff8a', 1.2)
+    this.popText(enemy.pos.x, enemy.pos.y + 1.15, enemy.pos.z, 'Effective!', '#b6ff8a', 1.2)
   }
 
   private splash(proj: Projectile, origin: THREE.Vector3): void {
@@ -1107,8 +1315,23 @@ export class Game {
     const x = (_v.x * 0.5 + 0.5) * rect.width + rect.left
     const y = (-_v.y * 0.5 + 0.5) * rect.height + rect.top
     for (let i = 0; i < count; i++) {
-      window.setTimeout(() => this.hud.flyCoin(x + (i - 1) * 12, y - i * 6), i * 60)
+      window.setTimeout(() => this.hud.flyCoin(x + (i - 1) * 6, y), i * 28)
     }
+  }
+
+  /** Keep combat text inside the view, including its outline, at every zoom. */
+  private popText(x: number, y: number, z: number, text: string, color: string, life = 0.9): void {
+    _v.set(x, y, z).project(this.camera)
+    if (_v.z > 1) {
+      this.fx.popup(x, y, z, text, color, life)
+      return
+    }
+    const marginX = Math.min(0.46, 0.2 + text.length * 0.02)
+    const marginY = 0.16
+    _v.x = THREE.MathUtils.clamp(_v.x, -1 + marginX, 1 - marginX)
+    _v.y = THREE.MathUtils.clamp(_v.y, -1 + marginY, 1 - marginY)
+    _v.unproject(this.camera)
+    this.fx.popup(_v.x, _v.y, _v.z, text, color, life)
   }
 
   private kill(enemy: Enemy): void {
@@ -1116,7 +1339,7 @@ export class Game {
     enemy.alive = false
     this.kills += 1
     this.gold += enemy.reward
-    this.fx.popup(enemy.pos.x, enemy.pos.y + 0.35, enemy.pos.z, `+${enemy.reward}`, '#ffe08a')
+    this.popText(enemy.pos.x, enemy.pos.y + 0.35, enemy.pos.z, `+${enemy.reward}`, '#ffe08a')
     this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xfff2c4, 12, 3.2)
     this.fx.debris(enemy.pos.x, enemy.pos.y + 0.2, enemy.pos.z, ENEMIES[enemy.kind].tint)
     this.fx.puff(enemy.pos.x, enemy.pos.y + 0.15, enemy.pos.z)
@@ -1163,6 +1386,18 @@ export class Game {
     return this.pets.filter((pet) => pet.alive).length
   }
 
+  private trackGate(enemy: Enemy): void {
+    const gate = this.map.points[0]
+    if (!gate) return
+    const dist = Math.hypot(enemy.pos.x - gate.x, enemy.pos.z - gate.z)
+    if (dist < this.waveGate) this.waveGate = dist
+    if (dist < this.runGate) this.runGate = dist
+  }
+
+  private gateValue(value: number): number {
+    return Number.isFinite(value) ? Math.round(value * 100) / 100 : 99
+  }
+
   private noteWave(waveNumber: number): void {
     if (this.waveLog.some((row) => row.wave === waveNumber)) return
     const def = this.level.waves[waveNumber - 1]
@@ -1175,6 +1410,7 @@ export class Game {
       rescues: this.rescues,
       abductions: this.abductions,
       came: def ? wavePreview(def).replaceAll('\n', ' | ') : '',
+      gate: this.gateValue(this.waveGate),
     })
   }
 
@@ -1191,6 +1427,7 @@ export class Game {
     this.bannerT = 2
     this.phase = 'wave'
     this.waveTime = 0
+    this.waveGate = Infinity
     this.spawnIndex = 0
     this.schedule = []
     let time = 0.35
@@ -1333,7 +1570,7 @@ export class Game {
     this.scene.remove(tower.group)
     this.towers.splice(index, 1)
     audio.play('click')
-    this.fx.popup(cell.x, 0.8, cell.z, `+${refund}`, '#fff1b8')
+    this.popText(cell.x, 0.8, cell.z, `+${refund}`, '#fff1b8')
     this.syncSelection()
     this.refreshHud()
     return true
@@ -1343,10 +1580,24 @@ export class Game {
     return this.towers.find((tower) => tower.x === x && tower.z === z)
   }
 
+  private coachPad(): { x: number; z: number } {
+    let fallback = this.map.hint
+    for (const cell of this.map.cells.values()) {
+      if (cell.kind !== 'build' || !cell.model.includes('dirt')) continue
+      fallback = cell
+      if (cell.z >= 3 && cell.z <= 8) return cell
+    }
+    return fallback
+  }
+
   private syncMarker(): void {
     const show = this.tutorStep === 1 && this.towers.length === 0
     this.hintMarker.visible = show
-    if (show) this.hintMarker.position.set(this.map.hint.x, 1.15, this.map.hint.z)
+    this.padPulse.visible = show
+    if (!show) return
+    const pad = this.coachPad()
+    this.hintMarker.position.set(pad.x, 1.05, pad.z)
+    this.padPulse.position.set(pad.x, 0.28, pad.z)
   }
 
   private syncSelection(): void {
@@ -1549,49 +1800,91 @@ export class Game {
 
   private titleView() {
     if (this.phase !== 'title') return null
-    return LEVELS.map((level) => ({
+    return LEVELS.map((level, index) => ({
       id: level.id,
       name: level.name,
       blurb: level.blurb,
+      lock: index > 0 ? `Beat ${LEVELS[index - 1].name}` : '',
       stars: starsFor(level.id),
       unlocked: levelUnlocked(level.id),
       selected: level.id === this.selectedLevel,
     }))
   }
 
-  private coachView(): { text: string; x: number; y: number } | null {
+  private coachView(): {
+    text: string
+    target: { l: number; t: number; r: number; b: number }
+    avoid: Array<{ l: number; t: number; r: number; b: number }>
+    lane: Array<{ x: number; y: number }>
+  } | null {
     if (this.tutorStep < 1 || this.tutorStep > 5 || this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') {
       return null
     }
-    const anchor = this.coachAnchor()
-    if (!anchor) return null
-    return { text: COACH[this.tutorStep], x: anchor.x, y: anchor.y }
+    const target = this.coachTarget()
+    if (!target) return null
+    const lane = this.map.points
+      .map((point) => this.projectWorld(point.x, 0.8, point.z))
+      .filter((point): point is { x: number; y: number } => !!point)
+    return { text: COACH[this.tutorStep], target, avoid: this.coachAvoid(), lane }
   }
 
-  private coachAnchor(): { x: number; y: number } | null {
+  private coachTarget(): { l: number; t: number; r: number; b: number } | null {
     const rect = this.renderer.domElement.getBoundingClientRect()
-    const mid = { x: rect.left + rect.width * 0.5, y: rect.top + rect.height * 0.42 }
-    if (this.tutorStep === 1) return this.projectWorld(this.map.hint.x, 1.35, this.map.hint.z) ?? mid
+    const mid = { l: rect.left + rect.width * 0.5 - 18, t: rect.top + rect.height * 0.42, r: rect.left + rect.width * 0.5 + 18, b: rect.top + rect.height * 0.42 + 28 }
+    if (this.tutorStep === 1) {
+      const pad = this.coachPad()
+      return this.worldBox(pad.x, pad.z, 0.2, 26) ?? mid
+    }
     if (this.tutorStep === 2) {
-      const button = document.querySelector('[data-part="turret"], [data-part="ballista"], .piece')
-      return this.boxPoint(button) ?? mid
+      return this.clientBox(this.weaponButton()) ?? mid
     }
-    if (this.tutorStep === 3) return this.boxPoint(document.querySelector('#preview')) ?? mid
+    if (this.tutorStep === 3) return this.clientBox(document.querySelector('#preview')) ?? mid
     if (this.tutorStep === 4) {
-      const spot = this.map.points[Math.floor(this.map.points.length / 2)]
-      return this.projectWorld(spot.x, 1.2, spot.z) ?? mid
+      const index = Math.max(2, Math.floor(this.map.points.length * 0.42))
+      const spot = this.map.points[Math.min(index, this.map.points.length - 2)]
+      return this.worldBox(spot.x, spot.z, 1.1, 22) ?? mid
     }
-    return this.boxPoint(document.querySelector('#start')) ?? mid
+    return this.clientBox(document.querySelector('#start')) ?? mid
   }
 
-  private boxPoint(node: Element | null): { x: number; y: number } | null {
-    if (!(node instanceof HTMLElement)) return null
+  private weaponButton(): Element | null {
+    for (const id of ['turret', 'ballista', 'cannon', 'catapult']) {
+      const node = document.querySelector(`[data-part="${id}"]`)
+      if (node) return node
+    }
+    return null
+  }
+
+  private coachAvoid(): Array<{ l: number; t: number; r: number; b: number }> {
+    const boxes: Array<{ l: number; t: number; r: number; b: number } | null> = []
+    boxes.push(this.clientBox(document.querySelector('#top')))
+    if (this.tutorStep === 2) boxes.push(this.clientBox(document.querySelector('#card-title')))
+    if (this.tutorStep === 4) {
+      const spawn = this.map.points[1] ?? this.map.points[0]
+      boxes.push(this.worldBox(spawn.x, spawn.z, 1.2, 56))
+      boxes.push(this.clientBox(document.querySelector('#preview')))
+    }
+    if (this.tutorStep === 3 || this.tutorStep === 5) {
+      boxes.push(this.clientBox(document.querySelector('#preview')))
+    }
+    return boxes.filter((box): box is { l: number; t: number; r: number; b: number } => !!box)
+  }
+
+  private clientBox(node: Element | null): { l: number; t: number; r: number; b: number } | null {
+    if (!(node instanceof HTMLElement) || node.hidden) return null
     const box = node.getBoundingClientRect()
     if (box.width < 2 || box.height < 2) return null
-    return { x: box.left + box.width / 2, y: box.top }
+    return { l: box.left, t: box.top, r: box.right, b: box.bottom }
+  }
+
+  private worldBox(x: number, z: number, y: number, pad: number): { l: number; t: number; r: number; b: number } | null {
+    const point = this.projectWorld(x, y, z)
+    if (!point) return null
+    return { l: point.x - pad, t: point.y - pad, r: point.x + pad, b: point.y + pad }
   }
 
   private projectWorld(x: number, y: number, z: number): { x: number; y: number } | null {
+    this.camera.updateMatrixWorld()
     _v.set(x, y, z).project(this.camera)
     if (_v.z > 1) return null
     const rect = this.renderer.domElement.getBoundingClientRect()
@@ -1737,6 +2030,9 @@ export class Game {
     this.userCam = false
     this.cameraLock = null
     this.shake = 0
+    this.titleSpin = 0
+    this.waveGate = Infinity
+    this.runGate = Infinity
     this.tutorStep = mode === 'play' && level.id === 1 && !tutorialSeen() ? 1 : 0
     audio.duck(false)
     this.spawnPets()
@@ -1843,9 +2139,11 @@ export class Game {
         tutor: this.tutorStep,
         tier: this.tier,
         log: this.waveLog.map((row) => ({ ...row })),
+        gate: this.gateValue(this.runGate),
       }),
       cellKind: (x, z) => this.map.cells.get(cellKey(x, z))?.kind ?? null,
       project: (x, z, y = 0.4) => {
+        this.camera.updateMatrixWorld()
         _v.set(x, y, z).project(this.camera)
         if (_v.z > 1) return null
         const rect = this.renderer.domElement.getBoundingClientRect()
@@ -1919,9 +2217,9 @@ export class Game {
         this.phase = 'wave'
         const scout = this.spawnEnemy('scout', 1, 0.48)
         const tank = this.spawnEnemy('tank', 1, 0.4)
-        this.fx.popup(scout.pos.x, scout.pos.y + 0.9, scout.pos.z, 'Effective!', '#b6ff8a', 30)
-        this.fx.popup(scout.pos.x + 0.15, scout.pos.y + 0.45, scout.pos.z, '14', '#fff6ea', 30)
-        this.fx.popup(tank.pos.x, tank.pos.y + 0.5, tank.pos.z, '9', '#fff6ea', 30)
+        this.popText(scout.pos.x, scout.pos.y + 0.9, scout.pos.z, 'Effective!', '#b6ff8a', 30)
+        this.popText(scout.pos.x + 0.15, scout.pos.y + 0.45, scout.pos.z, '14', '#fff6ea', 30)
+        this.popText(tank.pos.x, tank.pos.y + 0.5, tank.pos.z, '9', '#fff6ea', 30)
         this.refreshHud()
       },
       deselect: () => {
@@ -1936,20 +2234,31 @@ export class Game {
         this.refreshHud()
       },
       debugWin: () => this.win(),
-      debugLose: () => this.lose(),
+      debugLose: () => {
+        if (this.phase === 'victory' || this.phase === 'defeat') this.phase = 'wave'
+        this.lose()
+      },
       retry: () => this.retry(),
       startLevel: (id: number) => this.startLevel(id),
       next: () => this.next(),
       debugTitle: () => this.installLevel(levelById(this.selectedLevel || 1), 'title'),
       debugSettings: () => this.openSettings(),
-      debugCoach: () => {
-        this.phase = 'ready'
-        this.tutorStep = 1
-        this.selected = null
+      debugCoach: (step?: number) => {
+        const n = typeof step === 'number' ? Math.min(5, Math.max(1, Math.round(step))) : 1
+        if (this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') this.phase = 'ready'
+        this.tutorStep = n
+        if (n === 2) {
+          const tower = this.towers[0]
+          const cell = tower ? this.map.cells.get(cellKey(tower.x, tower.z)) : undefined
+          if (cell) this.selected = cell
+        } else {
+          this.selected = null
+        }
         this.syncMarker()
         this.syncSelection()
         this.refreshHud()
       },
+      iconUrl: () => this.iconUrl,
     }
   }
 }

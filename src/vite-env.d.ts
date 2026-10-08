@@ -26,6 +26,7 @@ interface TinyState {
   hint: { x: number; z: number }
   tutor: number
   tier: string
+  gate: number
   log: {
     wave: number
     gold: number
@@ -35,6 +36,7 @@ interface TinyState {
     rescues: number
     abductions: number
     came: string
+    gate: number
   }[]
 }
 
@@ -64,7 +66,8 @@ interface TinyApi {
   next: () => void
   debugTitle: () => void
   debugSettings: () => void
-  debugCoach: () => void
+  debugCoach: (step?: number) => void
+  iconUrl: () => string
 }
 
 interface Window {

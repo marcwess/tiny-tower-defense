@@ -95,6 +95,10 @@ export function kitMaterial(): THREE.MeshLambertMaterial {
 const WATER_UV = { u: 0.117, v: 0.94 }
 /** Bridge decks ship with a black UV at (0, 1). Pin those faces to a flat wood texel. */
 const WOOD_UV = { u: 0.03, v: 0.51 }
+/** Pale periwinkle bank. Snow rivers use this instead of the orange wood texel. */
+const SNOW_BANK = { u: 0.72, v: 0.82 }
+/** Pure white stripe on the kit atlas. Snow ground UVs just left of it are gray. */
+const SNOW_WHITE_U = 0.78
 
 function configureAtlas(map: THREE.Texture): void {
   map.colorSpace = THREE.SRGBColorSpace
@@ -104,7 +108,7 @@ function configureAtlas(map: THREE.Texture): void {
   map.needsUpdate = true
 }
 
-function repairRiverUvs(mesh: THREE.Mesh): void {
+function repairRiverUvs(mesh: THREE.Mesh, family: 'grass' | 'snow'): void {
   const geom = mesh.geometry
   const uv = geom.getAttribute('uv')
   const pos = geom.getAttribute('position')
@@ -131,7 +135,7 @@ function repairRiverUvs(mesh: THREE.Mesh): void {
     }
     const smear = maxU - minU + (maxV - minV) >= 0.045
     const blank = maxU < 0.01 && minV > 0.99
-    const pin = smear ? WATER_UV : blank ? WOOD_UV : null
+    const pin = family === 'grass' ? (smear ? WATER_UV : blank ? WOOD_UV : null) : null
     for (let k = 0; k < 3; k++) {
       const id = ids[k]
       const o = (tri * 3 + k) * 3
@@ -144,8 +148,18 @@ function repairRiverUvs(mesh: THREE.Mesh): void {
         normals[o + 2] = normal.getZ(id)
       }
       const uo = (tri * 3 + k) * 2
-      uvs[uo] = pin ? pin.u : uv.getX(id)
-      uvs[uo + 1] = pin ? pin.v : uv.getY(id)
+      let u = pin ? pin.u : uv.getX(id)
+      let v = pin ? pin.v : uv.getY(id)
+      if (family === 'snow') {
+        if (smear || blank || u > 0.9) {
+          u = SNOW_BANK.u
+          v = SNOW_BANK.v
+        } else if (u >= 0.81 && u <= 0.88 && v >= 0.75) {
+          u = SNOW_WHITE_U
+        }
+      }
+      uvs[uo] = u
+      uvs[uo + 1] = v
     }
   }
 
@@ -159,8 +173,32 @@ function repairRiverUvs(mesh: THREE.Mesh): void {
   geom.dispose()
 }
 
+/** Pull the pale ice path onto a deeper ice stripe so it reads against white snow. */
+function packSnowPath(mesh: THREE.Mesh): void {
+  if (!/straight|corner|spawn|end/.test(mesh.name) || mesh.name.includes('river')) return
+  const uv = mesh.geometry.getAttribute('uv')
+  if (!uv) return
+  for (let i = 0; i < uv.count; i++) {
+    if (uv.getX(i) < 0.2 && uv.getY(i) >= 0.7) uv.setY(i, 0.95)
+  }
+  uv.needsUpdate = true
+}
+
+/** Shift the gray-lavender snow stripe onto the white texel. Rocks and trees keep their other colors. */
+function liftSnowGround(mesh: THREE.Mesh): void {
+  const uv = mesh.geometry.getAttribute('uv')
+  if (!uv) return
+  for (let i = 0; i < uv.count; i++) {
+    const u = uv.getX(i)
+    const v = uv.getY(i)
+    if (u >= 0.81 && u <= 0.88 && v >= 0.75) uv.setX(i, SNOW_WHITE_U)
+  }
+  uv.needsUpdate = true
+}
+
 function adopt(root: THREE.Object3D, family: string): void {
   const river = root.name.includes('river')
+  const snow = family === 'snow'
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh
     if (!mesh.isMesh) return
@@ -175,9 +213,12 @@ function adopt(root: THREE.Object3D, family: string): void {
     mesh.castShadow = true
     mesh.receiveShadow = true
     if (river || mesh.name.includes('river')) {
-      repairRiverUvs(mesh)
+      repairRiverUvs(mesh, snow ? 'snow' : 'grass')
       // The channel's shared atlas edges pick up shadow acne that reads as static.
       mesh.receiveShadow = false
+    } else if (snow) {
+      liftSnowGround(mesh)
+      packSnowPath(mesh)
     }
   })
 }
@@ -468,4 +509,70 @@ export function renderPieceThumbnails(): void {
 
   renderer.forceContextLoss()
   renderer.dispose()
+}
+
+/** Home-screen icon: a stacked tower, a UFO, and a pet on a sky tile. */
+export function renderAppIcon(): string {
+  const size = 512
+  const renderer = new THREE.WebGLRenderer({
+    alpha: false,
+    antialias: true,
+    preserveDrawingBuffer: true,
+  })
+  renderer.setPixelRatio(1)
+  renderer.setSize(size, size, false)
+  renderer.setClearColor(0x8fd0ee, 1)
+  renderer.outputColorSpace = THREE.SRGBColorSpace
+  const scene = new THREE.Scene()
+  scene.add(new THREE.AmbientLight(0xfff6ea, 0.85))
+  const sun = new THREE.DirectionalLight(0xfff1d0, 1.6)
+  sun.position.set(3, 6, 4)
+  scene.add(sun)
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(3.2, 40),
+    new THREE.MeshLambertMaterial({ color: 0x7dba56 }),
+  )
+  ground.rotation.x = -Math.PI / 2
+  ground.position.y = -0.02
+  scene.add(ground)
+
+  const stack = new THREE.Group()
+  let cursor = 0
+  const place = (name: string, gap = 0.02) => {
+    const mesh = spawnModel(name)
+    stack.add(mesh)
+    stack.updateMatrixWorld(true)
+    const box = new THREE.Box3().setFromObject(mesh)
+    const lift = cursor - box.min.y
+    mesh.position.y += lift
+    cursor = box.max.y + lift - gap
+  }
+  place('tower-round-base', 0)
+  place('tower-round-bottom-a')
+  place('tower-round-middle-a')
+  place('weapon-turret', 0)
+  stack.position.set(-0.35, 0, 0.15)
+  scene.add(stack)
+
+  const ufo = spawnModel('enemy-ufo-b')
+  ufo.position.set(1.15, 1.55, -0.35)
+  ufo.scale.setScalar(0.85)
+  scene.add(ufo)
+
+  const pet = spawnPet('animal-chick')
+  pet.root.position.set(0.95, pet.foot, 0.85)
+  pet.root.scale.setScalar(0.55)
+  pet.root.rotation.y = -0.6
+  scene.add(pet.root)
+
+  const cam = new THREE.PerspectiveCamera(32, 1, 0.05, 30)
+  const box = new THREE.Box3().setFromObject(scene)
+  const center = box.getCenter(new THREE.Vector3())
+  cam.position.set(center.x + 2.4, center.y + 2.1, center.z + 3.6)
+  cam.lookAt(center.x, center.y + 0.15, center.z)
+  renderer.render(scene, cam)
+  const url = renderer.domElement.toDataURL('image/png')
+  renderer.forceContextLoss()
+  renderer.dispose()
+  return url
 }

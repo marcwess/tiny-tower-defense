@@ -50,7 +50,7 @@ Match the weapon to the UFO. The next-wave card lists who is coming and what the
 - **Drag** to pan. **Pinch** or the **mouse wheel** to zoom.
 - **Call wave** sends the next group. Between waves a small timer counts down and then calls it for you; **Call +gold** pays a bonus for starting early. **2×** speeds the action up. **Nums** toggles damage numbers.
 - **Sell** returns half of what that tower cost.
-- The **speaker** opens settings: sound, music, haptics, damage numbers, and quality. The first tap starts the music. On level 1, a few short hints point at the pad, the weapon, the weak-to tags, a pet rescue, and the early-wave bonus. Tap Next to skip one.
+- The **speaker** mutes sound and music. The **gear** opens settings: sound, music, haptics, damage numbers, and quality. The first tap starts the music. On level 1, a few short hints point at a build pad, the weapon, the weak-to tags, a pet rescue, and the early-wave bonus. Tap Next to skip one.
 - Clear the meadow for a star rating: 3 if all five pets are home, 2 for three or four, 1 for one or two.
 
 You begin with 120 gold. A base is 40 and a turret is 36, so the first tower can shoot before wave 1.

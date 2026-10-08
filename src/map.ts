@@ -69,7 +69,7 @@ export function buildMap(level: LevelDef = levelById(1)): BuiltMap {
     mesh.position.set(cell.x, 0, cell.z)
     mesh.rotation.y = cell.rot * (Math.PI / 2)
     if (cell.model.includes('river')) {
-      const water = makeWater(cell.model.includes('bridge'), waterMaps)
+      const water = makeWater(cell.model.includes('bridge'), waterMaps, level.biome === 'snow')
       water.userData.keep = true
       mesh.add(water)
     }
@@ -214,6 +214,48 @@ function waterTextures(): [THREE.Texture, THREE.Texture] {
   return [sharedWaves, sharedFoam]
 }
 
+function iceCanvas(): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = 256
+  canvas.height = 256
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return canvas
+  const sheet = ctx.createLinearGradient(0, 0, 220, 256)
+  sheet.addColorStop(0, '#f7fcff')
+  sheet.addColorStop(0.4, '#d7f0fa')
+  sheet.addColorStop(1, '#c5e4f2')
+  ctx.fillStyle = sheet
+  ctx.fillRect(0, 0, 256, 256)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  const cracks = [
+    [18, 48, 70, 86, 96, 64, 148, 122, 190, 98],
+    [36, 210, 88, 168, 130, 188, 176, 150, 230, 176],
+    [168, 28, 198, 72, 176, 118, 214, 150],
+    [24, 128, 62, 146, 54, 188],
+    [120, 20, 108, 70, 150, 58],
+  ]
+  for (const line of cracks) {
+    ctx.beginPath()
+    ctx.moveTo(line[0], line[1])
+    for (let i = 2; i < line.length; i += 2) ctx.lineTo(line[i], line[i + 1])
+    ctx.strokeStyle = 'rgba(78, 126, 154, 0.55)'
+    ctx.lineWidth = 2.4
+    ctx.stroke()
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'
+    ctx.lineWidth = 1
+    ctx.stroke()
+  }
+  return canvas
+}
+
+let sharedIce: THREE.Texture | null = null
+
+function iceTexture(): THREE.Texture {
+  if (!sharedIce) sharedIce = scrollingMap(iceCanvas(), 0.008)
+  return sharedIce
+}
+
 function scrollingMap(canvas: HTMLCanvasElement, speed: number): THREE.Texture {
   const tex = new THREE.CanvasTexture(canvas)
   tex.colorSpace = THREE.SRGBColorSpace
@@ -226,8 +268,9 @@ function scrollingMap(canvas: HTMLCanvasElement, speed: number): THREE.Texture {
   return tex
 }
 
-/** Local channel runs along Z, between the dirt banks. */
-function makeWater(bridge: boolean, bucket: THREE.Texture[]): THREE.Group {
+/** Local channel runs along Z, between the dirt banks. Snow uses a still ice sheet. */
+function makeWater(bridge: boolean, bucket: THREE.Texture[], frozen = false): THREE.Group {
+  if (frozen) return makeIce(bridge, bucket)
   const group = new THREE.Group()
   const [waves, foamTex] = waterTextures()
   if (!bucket.includes(waves)) bucket.push(waves, foamTex)
@@ -261,11 +304,26 @@ function makeWater(bridge: boolean, bucket: THREE.Texture[]): THREE.Group {
   return group
 }
 
+function makeIce(bridge: boolean, bucket: THREE.Texture[]): THREE.Group {
+  const group = new THREE.Group()
+  const ice = iceTexture()
+  if (!bucket.includes(ice)) bucket.push(ice)
+  const sheet = new THREE.Mesh(
+    new THREE.PlaneGeometry(bridge ? 0.74 : 0.92, 1.05),
+    new THREE.MeshBasicMaterial({ map: ice, depthWrite: true }),
+  )
+  sheet.rotation.x = -Math.PI / 2
+  sheet.position.y = bridge ? 0.2 : 0.25
+  sheet.renderOrder = 2
+  group.add(sheet)
+  return group
+}
+
 function makeIsland(biome: 'grass' | 'snow'): THREE.Group {
   const group = new THREE.Group()
-  const dirt = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0xd5dde6 : 0xb57a45 })
-  const rock = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0x8ea0b0 : 0x7d6558 })
-  const soil = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0x667684 : 0x5c4336 })
+  const dirt = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0xeef3f8 : 0xb57a45 })
+  const rock = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0xc5d0dc : 0x7d6558 })
+  const soil = new THREE.MeshLambertMaterial({ color: biome === 'snow' ? 0x8ea0b4 : 0x5c4336 })
   const slab = new THREE.Mesh(new THREE.BoxGeometry(7.85, 0.62, 11.85), dirt)
   slab.position.set(3, -0.32, 5)
   slab.castShadow = true

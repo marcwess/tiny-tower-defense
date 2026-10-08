@@ -61,8 +61,11 @@ try {
     deviceScaleFactor: 1,
   })
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`))
+  let glCopies = 0
   page.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`console: ${msg.text()}`)
+    const text = msg.text()
+    if (/copySubTexture|offset overflows/i.test(text)) glCopies += 1
+    if (msg.type() === 'error') errors.push(`console: ${text}`)
   })
 
   await page.goto(URL, { waitUntil: 'networkidle' })
@@ -76,6 +79,7 @@ try {
   const coach = await page.locator('#coach-text').textContent()
   if (!coach?.toLowerCase().includes('pad')) throw new Error(`coach missing: ${coach}`)
 
+  if (process.env.ONLY !== '23') {
   await page.evaluate(() => window.__TINY_TD__.cameraFocus(2, 7, 11))
   await delay(100)
   const point = await page.evaluate(() => window.__TINY_TD__.project(2, 7))
@@ -208,7 +212,7 @@ try {
     console.log('spam balance')
     for (const row of spam.log) {
       console.log(
-        `${row.wave} | ${row.gold} | ${row.kills} | ${row.leaks} | ${row.pets} | ${row.rescues} | ${row.abductions}`,
+        `${row.wave} | ${row.gold} | ${row.kills} | ${row.leaks} | ${row.pets} | ${row.rescues} | ${row.abductions} | ${row.gate}`,
       )
     }
   }
@@ -312,10 +316,10 @@ try {
   console.log('full game', JSON.stringify(finalState))
   if (finalState?.log) {
     console.log('balance')
-    console.log('wave | gold | kills | leaks | pets | rescues | abductions | came')
+    console.log('wave | gold | kills | leaks | pets | rescues | abductions | gate | came')
     for (const row of finalState.log) {
       console.log(
-        `${row.wave} | ${row.gold} | ${row.kills} | ${row.leaks} | ${row.pets} | ${row.rescues} | ${row.abductions} | ${row.came}`,
+        `${row.wave} | ${row.gold} | ${row.kills} | ${row.leaks} | ${row.pets} | ${row.rescues} | ${row.abductions} | ${row.gate} | ${row.came}`,
       )
     }
   }
@@ -328,6 +332,7 @@ try {
   if (finalState.abductions < 1) throw new Error(`mixed defense was never pressured: ${JSON.stringify(finalState)}`)
   if (finalState.rescues < 1) throw new Error(`mixed defense never rescued a pet: ${JSON.stringify(finalState)}`)
   if (finalState.gold > 150) throw new Error(`mixed defense hoarded gold: ${JSON.stringify(finalState)}`)
+  }
 
   function planFromPads(pads) {
     const [a, b, c, d, e] = pads
@@ -447,10 +452,10 @@ try {
     console.log(`level ${levelId} mixed`, JSON.stringify({ ...done, log: undefined }))
     if (done?.log) {
       console.log(`balance level ${levelId}`)
-      console.log('wave | gold | kills | leaks | pets | rescues | abductions | came')
+      console.log('wave | gold | kills | leaks | pets | rescues | abductions | gate | came')
       for (const row of done.log) {
         console.log(
-          `${row.wave} | ${row.gold} | ${row.kills} | ${row.leaks} | ${row.pets} | ${row.rescues} | ${row.abductions} | ${row.came}`,
+          `${row.wave} | ${row.gold} | ${row.kills} | ${row.leaks} | ${row.pets} | ${row.rescues} | ${row.abductions} | ${row.gate} | ${row.came}`,
         )
       }
     }
@@ -461,12 +466,28 @@ try {
       throw new Error(`level ${levelId} mixed defense skipped rescue: ${JSON.stringify(done)}`)
     }
     if (done.gold > 180) throw new Error(`level ${levelId} mixed defense hoarded gold: ${JSON.stringify(done)}`)
+    const closest = Math.min(done.gate ?? 99, ...(done.log ?? []).map((row) => row.gate ?? 99))
+    console.log(`level ${levelId} closest gate`, closest)
+    if (levelId === 2) {
+      if (done.leaks !== 0 || done.pets < 5) {
+        throw new Error(`level 2 should hold every pet under pressure: ${JSON.stringify(done)}`)
+      }
+      if (!(closest > 0.2 && closest < 3.3)) {
+        throw new Error(`level 2 carriers should nearly reach the gate: ${closest}`)
+      }
+    }
+    if (levelId === 3) {
+      if (done.stars < 2 || done.stars > 3 || done.pets < 3 || done.pets > 4) {
+        throw new Error(`level 3 should finish on 2 or 3 stars after losing a pet: ${JSON.stringify(done)}`)
+      }
+    }
   }
 
   await finishLevel(2)
   await finishLevel(3)
 
   if (errors.length) throw new Error(errors.join('\n'))
+  console.log('glCopySubTexture warnings', glCopies)
   console.log('playthrough ok')
 } catch (error) {
   code = 1

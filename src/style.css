@@ -123,11 +123,10 @@ html, body, #app {
 
 .pill img { width: 20px; height: 20px; image-rendering: auto; flex: 0 0 auto; }
 
-#mute.round {
+#mute.round, #gear.round {
   width: 44px;
   height: 44px;
   flex: 0 0 44px;
-  margin-left: auto;
   border: 0;
   padding: 0 0 4px;
   display: grid;
@@ -135,7 +134,9 @@ html, body, #app {
   background: var(--btn-round) center / 100% 100% no-repeat;
 }
 
-#mute img { width: 28px; height: 28px; pointer-events: none; }
+#mute.round { margin-left: auto; }
+
+#mute img, #gear img { width: 26px; height: 26px; pointer-events: none; }
 
 #dock {
   width: min(820px, 100%);
@@ -425,13 +426,13 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
   justify-content: center;
 }
 
-#retry, #next {
+#retry, #next, #to-levels {
   flex: 1 1 0;
   min-width: 0;
   background-image: var(--btn-green);
 }
 
-#next { background-image: var(--btn-blue); }
+#next, #to-levels { background-image: var(--btn-blue); }
 
 #title {
   position: fixed;
@@ -442,21 +443,28 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
   justify-content: space-between;
   align-items: center;
   padding:
-    calc(22px + env(safe-area-inset-top))
+    calc(18px + env(safe-area-inset-top))
     calc(12px + env(safe-area-inset-right))
-    calc(14px + env(safe-area-inset-bottom))
+    calc(12px + env(safe-area-inset-bottom))
     calc(12px + env(safe-area-inset-left));
   pointer-events: none;
-  background: linear-gradient(to bottom, rgba(143, 208, 238, 0.55), rgba(143, 208, 238, 0) 28%, rgba(143, 208, 238, 0) 62%, rgba(42, 36, 28, 0.28));
+  background: linear-gradient(to bottom, rgba(143, 208, 238, 0.35), rgba(143, 208, 238, 0) 22%, rgba(143, 208, 238, 0) 55%, rgba(42, 36, 28, 0.18));
 }
 
-#title-copy, #play, #levels, #coach-next, .sheet, .sheet button { pointer-events: auto; }
+#title-copy, #title-band, #play, #levels, #coach-next, .sheet, .sheet button { pointer-events: auto; }
+
+#title-copy {
+  padding: 6px 18px 10px;
+  border-radius: 18px;
+  background: rgba(255, 248, 236, 0.9);
+}
 
 #title h1 {
   margin: 0;
   text-align: center;
   color: #2a241c;
-  text-shadow: 0 2px 0 rgba(255, 248, 234, 0.85);
+  -webkit-text-stroke: 5px rgba(255, 248, 234, 0.96);
+  paint-order: stroke fill;
 }
 
 #title h1 span {
@@ -466,8 +474,20 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
   padding-top: 0.06em;
 }
 
+#title-band {
+  width: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  padding: 10px;
+  border-radius: 18px;
+  background: rgba(255, 248, 236, 0.92);
+}
+
 #play {
-  min-width: 180px;
+  width: 100%;
+  min-height: 52px;
   font-size: 22px;
   background-image: var(--btn-green);
 }
@@ -489,7 +509,9 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
 }
 
 .level.selected { outline: 3px solid #ffe08a; outline-offset: -4px; }
-.level.locked { opacity: 0.72; }
+.level.locked { opacity: 1; }
+
+.level-lock { width: 22px; height: 22px; display: block; margin: 0 auto 2px; }
 
 .level-name, .level-blurb {
   display: block;
@@ -497,8 +519,9 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
   overflow: visible;
 }
 
-.level-name { font-size: 13px; line-height: 1.2; }
-.level-blurb { font-size: 10px; line-height: 1.15; color: var(--muted); }
+.level-name { font-size: 14px; line-height: 1.25; }
+.level.locked .level-name { font-size: 13px; }
+.level-blurb { font-size: 11px; line-height: 1.2; color: var(--muted); }
 
 .level-stars { display: flex; justify-content: center; gap: 2px; margin-top: 4px; }
 .level-stars img { width: 14px; height: 14px; }
@@ -506,16 +529,26 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
 #coach {
   position: fixed;
   z-index: 7;
-  width: min(230px, calc(100vw - 24px));
-  transform: translate(-50%, -100%);
-  padding: 8px 10px 8px;
+  width: min(220px, calc(100vw - 16px));
+  padding: 10px 10px 8px;
   text-align: center;
   pointer-events: none;
   color: var(--ink);
   background: var(--panel) center / 100% 100% no-repeat;
+  overflow: visible;
 }
 
-#coach.below { transform: translate(-50%, 0); }
+#coach-arrow {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+}
+
+#coach[data-side='down'] #coach-arrow { left: 50%; bottom: -8px; transform: translateX(-50%) rotate(90deg); }
+#coach[data-side='up'] #coach-arrow { left: 50%; top: -8px; transform: translateX(-50%) rotate(-90deg); }
+#coach[data-side='left'] #coach-arrow { left: -8px; top: 50%; transform: translateY(-50%) rotate(180deg); }
+#coach[data-side='right'] #coach-arrow { right: -8px; top: 50%; transform: translateY(-50%); }
 
 #coach-text {
   margin: 0 0 6px;
@@ -537,22 +570,22 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
   inset: 0;
   z-index: 9;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
   background: rgba(42, 36, 28, 0.28);
-  padding:
-    calc(12px + env(safe-area-inset-top))
-    calc(12px + env(safe-area-inset-right))
-    calc(12px + env(safe-area-inset-bottom))
-    calc(12px + env(safe-area-inset-left));
+  padding: 8px;
+  overflow: auto;
 }
 
 .sheet {
   width: min(420px, 100%);
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px 12px 14px;
+  gap: 5px;
+  padding: 10px 12px 12px;
   background: var(--panel) center / 100% 100% no-repeat;
 }
 
@@ -567,7 +600,7 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
 
 .sheet button, .quality button {
   border: 0;
-  min-height: 40px;
+  min-height: 36px;
   font-family: 'Kenney Mini', 'Kenney Bold', sans-serif;
   font-size: 15px;
   color: var(--ink);
@@ -652,7 +685,8 @@ h1 {
   .pill { font-size: 15px; min-height: 40px; padding: 2px 6px 7px 5px; }
   .pill img { width: 18px; height: 18px; }
   .pill.wave { flex-basis: 70px; width: 70px; }
-  #mute.round { width: 40px; height: 40px; flex-basis: 40px; }
+  #mute.round, #gear.round { width: 40px; height: 40px; flex-basis: 40px; }
+  #mute img, #gear img { width: 22px; height: 22px; }
   .btn, #count { font-size: 15px; min-height: 48px; padding: 4px 6px 10px; }
   #speed { flex-basis: 46px; }
   #dmg { flex-basis: 58px; }
@@ -680,12 +714,47 @@ h1 {
   #hint, #card-blurb { font-size: 12px; }
   #card h2 { font-size: 16px; }
   h1 { font-size: 24px; }
-  #mute.round { width: 40px; height: 40px; }
+  #mute.round, #gear.round { width: 40px; height: 40px; }
+}
+
+@media (max-height: 620px) {
+  .sheet { gap: 4px; padding: 8px 10px 10px; }
+  .sheet h2 { font-size: 18px; margin: 0; }
+  .sheet button, .quality button { min-height: 32px; font-size: 13px; }
+  #sheet-close { min-height: 40px; }
 }
 
 @media (min-width: 900px) {
-  .pill { font-size: 20px; }
-  .pill.wave { flex-basis: 108px; width: 108px; }
+  #top, #dock { zoom: 1.2; }
+  #title h1 span { font-size: 64px; }
+  #title-copy { padding: 10px 28px 14px; }
+  #title-band { width: min(860px, 86vw); padding: 16px; gap: 12px; }
+  #play { min-height: 68px; font-size: 28px; }
+  .level { padding: 16px 10px 12px; }
+  .level-name { font-size: 22px; }
+  .level.locked .level-name { font-size: 20px; }
+  .level-blurb { font-size: 16px; }
+  .level-lock { width: 32px; height: 32px; }
+  .level-stars img { width: 22px; height: 22px; }
+  .pill { font-size: 20px; min-height: 52px; }
+  .pill img { width: 26px; height: 26px; }
+  .pill.wave { flex-basis: 120px; width: 120px; }
+  #mute.round, #gear.round { width: 52px; height: 52px; flex-basis: 52px; }
   #hint { font-size: 16px; }
+  .btn, #count { font-size: 18px; min-height: 56px; }
+  #card h2 { font-size: 24px; }
+  .piece-name { font-size: 16px; }
+  .piece-effect { font-size: 14px; }
+  .chip { font-size: 16px; }
   #tray { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .end-card { zoom: 1.15; }
+  .sheet { zoom: 1.12; }
+}
+
+@media (min-width: 1200px) {
+  #top, #dock { zoom: 1.35; }
+  #title h1 span { font-size: 76px; }
+  #play { min-height: 76px; font-size: 32px; }
+  .level-name { font-size: 26px; }
+  .level.locked .level-name { font-size: 22px; }
 }

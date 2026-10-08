@@ -40,6 +40,8 @@ interface Ring {
 }
 
 const MAX = 420
+const POP_W = 1024
+const POP_H = 256
 
 export class Fx {
   private parts: Particle[] = []
@@ -177,10 +179,17 @@ export class Fx {
       return old
     }
     const canvas = document.createElement('canvas')
+    canvas.width = POP_W
+    canvas.height = POP_H
     const ctx = canvas.getContext('2d')
     if (!ctx) return null
     const tex = new THREE.CanvasTexture(canvas)
     tex.colorSpace = THREE.SRGBColorSpace
+    tex.magFilter = THREE.LinearFilter
+    tex.minFilter = THREE.LinearFilter
+    tex.generateMipmaps = false
+    tex.wrapS = THREE.ClampToEdgeWrapping
+    tex.wrapT = THREE.ClampToEdgeWrapping
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false })
     const sprite = new THREE.Sprite(mat)
     sprite.visible = false
@@ -193,19 +202,18 @@ export class Fx {
     if (!slot) return
     const fontSize = 72
     const font = `700 ${fontSize}px "Kenney Bold", "Kenney Future", sans-serif`
-    slot.ctx.font = font
-    const measured = Math.ceil(slot.ctx.measureText(text).width)
-    // Kenney Bold's outlines sit 0.25em above the em box, and the stroke needs its own margin.
-    const stroke = 16
-    const padX = stroke + 36
-    const ascent = Math.ceil(fontSize * 1.4) + stroke
-    const descent = Math.ceil(fontSize * 0.45) + stroke
-    const width = Math.max(64, measured + padX * 2)
-    const height = ascent + descent
-    slot.canvas.width = width
-    slot.canvas.height = height
     const ctx = slot.ctx
-    ctx.clearRect(0, 0, width, height)
+    ctx.font = font
+    const measured = Math.ceil(ctx.measureText(text).width)
+    // Kenney Bold's outlines sit outside the em box. Keep the canvas size fixed so the
+    // GL texture is never reallocated (that realloc was the copySubTexture overflow).
+    const stroke = 18
+    const padX = stroke + 48
+    const ascent = Math.ceil(fontSize * 1.65) + stroke
+    const descent = Math.ceil(fontSize * 0.6) + stroke
+    const width = Math.min(POP_W, Math.max(64, measured + padX * 2))
+    const height = Math.min(POP_H, ascent + descent)
+    ctx.clearRect(0, 0, POP_W, POP_H)
     ctx.font = font
     ctx.textAlign = 'center'
     ctx.textBaseline = 'alphabetic'
@@ -216,9 +224,11 @@ export class Fx {
     ctx.strokeText(text, width / 2, ascent)
     ctx.fillStyle = color
     ctx.fillText(text, width / 2, ascent)
+    slot.tex.offset.set(0, 1 - height / POP_H)
+    slot.tex.repeat.set(width / POP_W, height / POP_H)
     slot.tex.needsUpdate = true
     slot.sprite.position.set(x, y, z)
-    const worldH = 0.48
+    const worldH = 0.52
     slot.sprite.scale.set(worldH * (width / height), worldH, 1)
     slot.sprite.visible = true
     ;(slot.sprite.material as THREE.SpriteMaterial).opacity = 1

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdir } from 'node:fs/promises'
@@ -147,6 +147,8 @@ try {
     }
   })
   console.log('portrait frame', JSON.stringify(portraitFrame))
+  const portraitZoom = await page.evaluate(() => window.__TINY_TD__.getState().zoom)
+  console.log('portrait zoom', portraitZoom)
   for (const [name, point] of Object.entries(portraitFrame)) {
     if (!point || point.x < 16 || point.x > 374 || point.y < 96 || point.y > 720) {
       throw new Error(`portrait framing missed ${name}: ${JSON.stringify(point)}`)
@@ -488,9 +490,9 @@ try {
   })
   await delay(300)
   const desktop = await stateOf(page)
-  console.log('desktop zoom', desktop?.zoom)
-  if (!desktop || desktop.zoom > 13.2 || desktop.zoom < 11) {
-    throw new Error(`desktop framing is not tighter: ${desktop?.zoom}`)
+  console.log('desktop zoom', desktop?.zoom, 'portrait zoom', portraitZoom)
+  if (!desktop || !(desktop.zoom < portraitZoom)) {
+    throw new Error(`desktop framing should be closer than portrait: ${desktop?.zoom} vs ${portraitZoom}`)
   }
   await page.screenshot({ path: `${OUT}/desktop_1280x800.png` })
   await page.screenshot({ path: `${OUT}/desktop_midwave.png` })
@@ -507,11 +509,30 @@ try {
   await page.screenshot({ path: `${OUT}/level_select.png` })
 
   await page.evaluate(() => {
-    window.__TINY_TD__.startLevel(1)
-    window.__TINY_TD__.debugCoach()
+    const api = window.__TINY_TD__
+    api.startLevel(1)
+    api.debugCoach(1)
   })
   await delay(300)
+  await page.screenshot({ path: `${OUT}/tutorial_1.png` })
   await page.screenshot({ path: `${OUT}/tutorial_hint.png` })
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    const hint = api.getState().hint
+    api.buy(hint.x, hint.z, 'base')
+    api.debugCoach(2)
+  })
+  await delay(250)
+  await page.screenshot({ path: `${OUT}/tutorial_2.png` })
+  await page.evaluate(() => window.__TINY_TD__.debugCoach(3))
+  await delay(200)
+  await page.screenshot({ path: `${OUT}/tutorial_3.png` })
+  await page.evaluate(() => window.__TINY_TD__.debugCoach(4))
+  await delay(200)
+  await page.screenshot({ path: `${OUT}/tutorial_4.png` })
+  await page.evaluate(() => window.__TINY_TD__.debugCoach(5))
+  await delay(200)
+  await page.screenshot({ path: `${OUT}/tutorial_5.png` })
 
   await page.evaluate(() => {
     const api = window.__TINY_TD__
@@ -529,6 +550,9 @@ try {
   await delay(200)
   await page.screenshot({ path: `${OUT}/level2_midwave.png` })
 
+  await page.evaluate(() => window.__TINY_TD__.debugSettings())
+  await page.locator('[data-quality="high"]').click()
+  await page.locator('#sheet-close').click()
   await page.evaluate(() => {
     const api = window.__TINY_TD__
     api.startLevel(3)
@@ -548,6 +572,15 @@ try {
   await page.evaluate(() => window.__TINY_TD__.debugSettings())
   await delay(200)
   await page.screenshot({ path: `${OUT}/settings.png` })
+  const settingsFit = await page.evaluate(() => {
+    const close = document.querySelector('#sheet-close')
+    if (!close) return null
+    const box = close.getBoundingClientRect()
+    return { top: box.top, bottom: box.bottom, height: window.innerHeight }
+  })
+  if (!settingsFit || settingsFit.bottom > settingsFit.height - 4 || settingsFit.top < 0) {
+    throw new Error(`settings close is clipped: ${JSON.stringify(settingsFit)}`)
+  }
 
   await page.locator('#sheet-close').click()
   await page.evaluate(() => {
@@ -559,6 +592,18 @@ try {
   const nextBox = await page.locator('#next').boundingBox()
   if (!nextBox || nextBox.width < 40) throw new Error('win card is missing Next')
   await page.screenshot({ path: `${OUT}/win_next.png` })
+
+  await page.evaluate(() => window.__TINY_TD__.debugLose())
+  await delay(200)
+  const loseCopy = await page.evaluate(() => ({
+    next: document.querySelector('#next')?.hidden ?? true,
+    levels: document.querySelector('#to-levels')?.textContent ?? '',
+    levelsHidden: document.querySelector('#to-levels')?.hidden ?? true,
+  }))
+  if (!loseCopy.next || loseCopy.levelsHidden || !/levels/i.test(loseCopy.levels)) {
+    throw new Error(`lose card should offer Levels: ${JSON.stringify(loseCopy)}`)
+  }
+  await page.screenshot({ path: `${OUT}/lose_card.png` })
 
   await page.setViewportSize({ width: 320, height: 568 })
   await page.evaluate(() => {
@@ -577,11 +622,46 @@ try {
   })
   if (hudRow > 56) throw new Error(`HUD wrapped at 320x568: ${hudRow}`)
   await page.screenshot({ path: `${OUT}/gameplay_320x568.png` })
+  await page.evaluate(() => window.__TINY_TD__.debugSettings())
+  await delay(200)
+  const settingsSmall = await page.evaluate(() => {
+    const close = document.querySelector('#sheet-close')
+    if (!close) return null
+    const box = close.getBoundingClientRect()
+    return { top: box.top, bottom: box.bottom, height: window.innerHeight, width: window.innerWidth }
+  })
+  if (!settingsSmall || settingsSmall.bottom > settingsSmall.height - 2) {
+    throw new Error(`settings clipped at 320x568: ${JSON.stringify(settingsSmall)}`)
+  }
+  await page.screenshot({ path: `${OUT}/settings_320x568.png` })
 
   await page.setViewportSize({ width: 1280, height: 800 })
+  await page.locator('#sheet-close').click()
   await page.evaluate(() => window.__TINY_TD__.debugTitle())
   await delay(600)
   await page.screenshot({ path: `${OUT}/desktop_title.png` })
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.startLevel(3)
+    const pads = api.getState().pads
+    api.buy(pads[0][0], pads[0][1], 'base')
+    api.buy(pads[0][0], pads[0][1], 'turret')
+    api.buy(pads[2][0], pads[2][1], 'base')
+    api.buy(pads[2][0], pads[2][1], 'ballista')
+    api.startWave()
+    api.deselect()
+    api.setTimeScale(0)
+  })
+  await delay(500)
+  await page.screenshot({ path: `${OUT}/desktop_level3.png` })
+
+  const iconUrl = await page.evaluate(() => window.__TINY_TD__.iconUrl())
+  if (iconUrl?.startsWith('data:image/png')) {
+    const buf = Buffer.from(iconUrl.split(',')[1], 'base64')
+    writeFileSync('public/icons/icon-512.png', buf)
+    writeFileSync('public/icons/apple-touch-icon.png', buf)
+    writeFileSync('/tmp/ttd-icon-512.png', buf)
+  }
 
   await browser.close()
   console.log('screenshots written to', OUT)

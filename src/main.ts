@@ -14,7 +14,8 @@ hud.onStart = () => {
   game.startWave(true)
 }
 hud.onSpeed = () => game.toggleSpeed()
-hud.onMute = () => game.openSettings()
+hud.onMute = () => game.toggleMute()
+hud.onGear = () => game.openSettings()
 hud.onDamage = () => game.toggleDamage()
 hud.onRetry = () => {
   audio.unlock()
@@ -74,6 +75,7 @@ void game.init().catch((error: unknown) => {
       tutor: 0,
       tier: 'low',
       log: [],
+      gate: 99,
     }),
     cellKind: () => null,
     project: () => null,
@@ -98,5 +100,6 @@ void game.init().catch((error: unknown) => {
     debugTitle: () => {},
     debugSettings: () => {},
     debugCoach: () => {},
+    iconUrl: () => '',
   }
 })

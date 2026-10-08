@@ -303,7 +303,7 @@ export const LEVELS: LevelDef[] = [
       },
       {
         groups: [
-          { kind: 'tank', count: 1, interval: 0.2, entry: 0.96, hpMul: 2 },
+          { kind: 'tank', count: 1, interval: 0.2, entry: 0.96, hpMul: 2.2 },
           { kind: 'tank', count: 5, interval: 1.0 },
           { kind: 'swarm', count: 10, interval: 0.3 },
         ],
@@ -430,6 +430,7 @@ export const LEVELS: LevelDef[] = [
       {
         groups: [
           { kind: 'boss', count: 1, interval: 0.2 },
+          { kind: 'tank', count: 1, interval: 0.25, entry: 0.97, hpMul: 6.2 },
           { kind: 'tank', count: 4, interval: 0.85 },
           { kind: 'swarm', count: 12, interval: 0.22 },
           { kind: 'shield', count: 4, interval: 0.65 },
