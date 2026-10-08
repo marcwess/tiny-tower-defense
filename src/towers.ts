@@ -165,16 +165,19 @@ export class Tower {
       }
     }
     if (this.kick > 0) {
-      this.kick = Math.max(0, this.kick - dt * 4.5)
+      this.kick = Math.max(0, this.kick - dt * 5.5)
       const arm = this.weaponPivot?.getObjectByName('catapult')
-      if (arm) arm.rotation.x = -this.kick * 0.75
+      if (arm) arm.rotation.x = -this.kick * 0.9
       const barrel = this.weaponPivot?.getObjectByName('barrel')
       if (barrel) {
         const data = barrel.userData as { baseZ?: number }
         if (data.baseZ === undefined) data.baseZ = barrel.position.z
         const baseZ = data.baseZ ?? 0
-        barrel.position.z = baseZ - this.kick * 0.1
+        barrel.position.z = baseZ - this.kick * 0.22
       }
+      if (this.weaponPivot) this.weaponPivot.position.z = -this.kick * 0.26
+    } else if (this.weaponPivot && this.weaponPivot.position.z !== 0) {
+      this.weaponPivot.position.z = 0
     }
   }
 

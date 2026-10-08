@@ -238,6 +238,7 @@ export class Game {
   private gold = START_GOLD
   private waveIndex = 0
   private countdown = 0
+  private countdownFull = 3.6
   private waveTime = 0
   private schedule: { time: number; kind: EnemyKind; entry: number; hpMul: number }[] = []
   private spawnIndex = 0
@@ -624,8 +625,9 @@ export class Game {
   }
 
   /**
-   * Same 3/4 yaw as the main-branch portrait. Distance is solved so the path,
-   * spawn, and pen fill the width. Decorative border tiles may crop.
+   * Meadow is framed on the grass, not the plinth. A 60° tilt still leaves a
+   * tall phone half sky, so portrait looks down at 89° with the path running
+   * vertically, and wide screens turn the path sideways at 72°.
    */
   private framing(): {
     fov: number
@@ -639,12 +641,15 @@ export class Game {
   } {
     const aspect = this.camera.aspect || 1
     const meadow = this.level?.id === 1
-    const pose =
-      aspect < 0.62
-        ? { fov: meadow ? 40 : 42, pitch: meadow ? 0.62 : 0.76, azimuth: 2.8, lookY: 0.35 }
+    const pose = meadow
+      ? aspect < 1
+        ? { fov: 22, pitch: 1.553, azimuth: Math.PI, lookY: 0.02 }
+        : { fov: 30, pitch: 1.257, azimuth: Math.PI / 2, lookY: 0.02 }
+      : aspect < 0.62
+        ? { fov: 42, pitch: 0.76, azimuth: 2.8, lookY: 0.35 }
         : aspect < 1.05
-          ? { fov: meadow ? 36 : 38, pitch: meadow ? 0.6 : 0.74, azimuth: 2.5, lookY: 0.28 }
-          : { fov: meadow ? 28 : 30, pitch: meadow ? 0.58 : 0.72, azimuth: 2.25, lookY: 0.2 }
+          ? { fov: 38, pitch: 0.74, azimuth: 2.5, lookY: 0.28 }
+          : { fov: 30, pitch: 0.72, azimuth: 2.25, lookY: 0.2 }
     if (!this.map) {
       const distance = aspect < 0.62 ? 20.2 : aspect < 1.05 ? 18.4 : 12.2
       const tx = aspect < 0.62 ? 2.6 : aspect < 1.05 ? 3 : 3.15
@@ -670,12 +675,19 @@ export class Game {
       if (plate && plate.height > 24 && plate.bottom > top) top = Math.round(plate.bottom + 14)
       if (band && band.top > top + 120) bottom = Math.min(bottom, Math.round(band.top - 12))
     }
-    const side = Math.max(4, Math.round(w * 0.012))
+    const side = this.level?.id === 1 ? 1 : Math.max(4, Math.round(w * 0.012))
     return { w, h, l: side, t: top, r: w - side, b: Math.min(h - 8, bottom) }
   }
 
   /** Corners of the path, the spawn lead-in, and the pet pen. Not the plinth. */
   private framePoints(): THREE.Vector3[] {
+    if (this.level?.id === 1) {
+      const pts: THREE.Vector3[] = []
+      for (const x of [-0.15, 6.15]) {
+        for (const z of [0.05, 10.25]) pts.push(new THREE.Vector3(x, 0.15, z))
+      }
+      return pts
+    }
     let minX = Infinity
     let maxX = -Infinity
     let minZ = Infinity
@@ -734,41 +746,83 @@ export class Game {
   } {
     const points = this.framePoints()
     const safe = this.viewInsets()
+    const meadow = this.level?.id === 1
     let cx = 0
     let cz = 0
-    for (const point of this.map.points) {
-      cx += point.x
-      cz += point.z
+    if (meadow) {
+      for (const point of points) {
+        cx += point.x
+        cz += point.z
+      }
+      cx /= Math.max(1, points.length)
+      cz /= Math.max(1, points.length)
+    } else {
+      for (const point of this.map.points) {
+        cx += point.x
+        cz += point.z
+      }
+      cx /= Math.max(1, this.map.points.length)
+      cz /= Math.max(1, this.map.points.length)
     }
-    cx /= Math.max(1, this.map.points.length)
-    cz /= Math.max(1, this.map.points.length)
     const portrait = safe.w / Math.max(1, safe.h) < 0.85
+    const reach = meadow ? 1 : 1.6
+    const step = meadow ? 0.25 : 0.8
     let bestDist = 18
     let bestX = cx
     let bestZ = cz
     let bestScore = Infinity
-    for (let ox = -1.6; ox <= 1.6; ox += 0.8) {
-      for (let oz = -1.6; oz <= 1.6; oz += 0.8) {
+    for (let ox = -reach; ox <= reach + 1e-6; ox += step) {
+      for (let oz = -reach; oz <= reach + 1e-6; oz += step) {
         const tx = THREE.MathUtils.clamp(cx + ox, 0.45, 5.55)
         const tz = THREE.MathUtils.clamp(cz + oz, 0.45, 9.2)
-        let lo = 7
-        let hi = 40
-        for (let i = 0; i < 11; i++) {
+        let lo = meadow ? 8 : 7
+        let hi = meadow ? 58 : 40
+        for (let i = 0; i < (meadow ? 12 : 11); i++) {
           const mid = (lo + hi) / 2
           const over = this.overflowAt(mid, tx, tz, pose, points, safe)
           if (over <= 0.6) hi = mid
           else lo = mid
         }
         const span = this.spanAt(hi, tx, tz, pose, points, safe)
-        const widthShort = portrait ? Math.max(0, 0.9 - span.width) : 0
-        const heightShort = portrait ? 0 : Math.max(0, 0.78 - span.height)
-        const score = widthShort * 200 + heightShort * 80 + span.center * (portrait ? 4 : 14) + span.overflow * 30
+        const widthShort = Math.max(0, (portrait ? 0.94 : 0.9) - span.width)
+        const heightShort = Math.max(0, (portrait ? 0.7 : 0.78) - span.height)
+        const score = meadow
+          ? (1 - span.fill) * 500 + span.overflow * 40 + span.center * 28
+          : widthShort * 240 + heightShort * (portrait ? 160 : 80) + span.center * (portrait ? 6 : 14) + span.overflow * 30
         if (score < bestScore) {
           bestScore = score
           bestDist = hi
           bestX = tx
           bestZ = tz
         }
+      }
+    }
+    if (meadow) {
+      for (let n = 0; n < 5; n++) {
+        const span = this.spanAt(bestDist, bestX, bestZ, pose, points, safe)
+        const errX = (span.minX + span.maxX) / 2 - safe.w / 2
+        const errY = (span.minY + span.maxY) / 2 - (safe.t + safe.b) / 2
+        if (Math.abs(errX) < 14 && Math.abs(errY) < 14) break
+        const k = 0.007
+        bestX = THREE.MathUtils.clamp(
+          bestX + Math.cos(pose.azimuth) * errX * k + Math.sin(pose.azimuth) * errY * k,
+          0.45,
+          5.55,
+        )
+        bestZ = THREE.MathUtils.clamp(
+          bestZ - Math.sin(pose.azimuth) * errX * k + Math.cos(pose.azimuth) * errY * k,
+          0.45,
+          9.2,
+        )
+        let lo = 8
+        let hi = 58
+        for (let i = 0; i < 12; i++) {
+          const mid = (lo + hi) / 2
+          const over = this.overflowAt(mid, bestX, bestZ, pose, points, safe)
+          if (over <= 0.6) hi = mid
+          else lo = mid
+        }
+        bestDist = hi
       }
     }
     return { distance: bestDist, tx: bestX, tz: bestZ }
@@ -781,7 +835,7 @@ export class Game {
     pose: { fov: number; pitch: number; azimuth: number; lookY: number },
     points: THREE.Vector3[],
     safe: { w: number; h: number; l: number; t: number; r: number; b: number },
-  ): { width: number; height: number; center: number; overflow: number } {
+  ): { width: number; height: number; center: number; overflow: number; fill: number; minX: number; maxX: number; minY: number; maxY: number } {
     const overflow = this.overflowAt(distance, tx, tz, pose, points, safe)
     let minX = Infinity
     let maxX = -Infinity
@@ -799,11 +853,20 @@ export class Game {
     const safeMidY = (safe.t + safe.b) / 2
     const center =
       Math.abs((minX + maxX) / 2 - safe.w / 2) / safe.w + Math.abs((minY + maxY) / 2 - safeMidY) / safe.h
+    const gapW = Math.max(1, safe.r - safe.l)
+    const gapH = Math.max(1, safe.b - safe.t)
+    const insideW = Math.max(0, Math.min(maxX, safe.r) - Math.max(minX, safe.l))
+    const insideH = Math.max(0, Math.min(maxY, safe.b) - Math.max(minY, safe.t))
     return {
       width: (maxX - minX) / Math.max(1, safe.w),
       height: (maxY - minY) / Math.max(1, safe.h),
       center,
       overflow,
+      fill: (insideW * insideH) / (gapW * gapH),
+      minX,
+      maxX,
+      minY,
+      maxY,
     }
   }
 
@@ -847,7 +910,7 @@ export class Game {
   private clampCamera(): void {
     this.target.x = THREE.MathUtils.clamp(this.target.x, 0.2, 5.8)
     this.target.z = THREE.MathUtils.clamp(this.target.z, 0.2, 9.8)
-    this.distance = THREE.MathUtils.clamp(this.distance, 4.2, 46)
+    this.distance = THREE.MathUtils.clamp(this.distance, 4.2, 64)
   }
 
   private updateCamera(): void {
@@ -1013,7 +1076,6 @@ export class Game {
       if (this.phase === 'title') this.titleSpin += raw * 0.18
       if (this.map) tickDiorama(this.map, this.visualTime)
       this.tickSnow()
-      this.keepPopupsUnderHud()
       this.refreshHud()
     }
     this.updateCamera()
@@ -1035,7 +1097,10 @@ export class Game {
     const playing = this.phase === 'ready' || this.phase === 'wave' || this.phase === 'breather'
     if (this.phase === 'wave') this.updateSpawns(dt)
     if (this.phase === 'ready' && this.level.id === 1 && (this.tutorStep === 0 || this.tutorStep >= 3)) {
-      if (this.countdown <= 0) this.countdown = this.tutorStep >= 3 ? 2.6 : 4
+      if (this.countdown <= 0) {
+        this.countdownFull = this.tutorStep >= 3 ? 2.6 : 3.6
+        this.countdown = this.countdownFull
+      }
       this.countdown -= dt
       if (this.countdown <= 0) this.startWave(false)
     }
@@ -1092,7 +1157,7 @@ export class Game {
 
   private spawnEnemy(kind: EnemyKind, hpMul = 1, entry = 0): Enemy {
     const meadow = this.level.id === 1
-    const enemy = this.takeEnemy(kind, hpMul * (meadow ? 0.72 : 1), meadow ? 1.22 : 1, meadow ? 1.42 : 1)
+    const enemy = this.takeEnemy(kind, hpMul, meadow ? 1.06 : 1, meadow ? 1.9 : 1)
     const points = this.map.points
     const max = Math.max(1, points.length - 1)
     const index = Math.min(max - 1, Math.floor(Math.max(0, entry) * max))
@@ -1374,7 +1439,6 @@ export class Game {
     this.advanceTutor('rescue')
     this.popText(enemy.pos.x, enemy.pos.y + 0.55, enemy.pos.z, 'Saved!', '#b8ffb0', 1.15)
     this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xd8ffe4, 10, 2.2)
-    this.shake = Math.min(0.06, Math.max(this.shake, 0.035))
   }
 
   private updateTowers(dt: number): void {
@@ -1481,7 +1545,7 @@ export class Game {
       alive: true,
     })
     audio.play(stats.sfx)
-    this.fx.burst(pos.x, pos.y, pos.z, 0xfff4c4, 4, 1.4)
+    this.fx.flash(pos.x, pos.y, pos.z, 0xfff3c4)
   }
 
   private updateProjectiles(dt: number): void {
@@ -1501,6 +1565,9 @@ export class Game {
       const horiz = Math.hypot(proj.vel.x, proj.vel.z) || 0.001
       proj.mesh.rotation.y = Math.atan2(proj.vel.x, proj.vel.z)
       proj.mesh.rotation.x = -Math.atan2(proj.vel.y, horiz)
+      if (proj.weapon === 'cannon' || proj.weapon === 'ballista') {
+        this.fx.trail(proj.pos.x, proj.pos.y, proj.pos.z, proj.weapon === 'cannon' ? 0xffb15a : 0xfff1b0)
+      }
 
       const prevX = proj.pos.x - proj.vel.x * dt
       const prevY = proj.pos.y - proj.vel.y * dt
@@ -1563,8 +1630,9 @@ export class Game {
     const effective = mod.effective || (hadShield && mod.shield >= 1.8)
     if (effective) this.popEffective(enemy)
     if (this.showDamage && amount >= 1) {
-      this.popText(enemy.pos.x + 0.15, enemy.pos.y + 0.45, enemy.pos.z, String(Math.round(amount)), '#fff6ea', 0.7)
+      this.popText(enemy.pos.x, enemy.pos.y + 0.55, enemy.pos.z, String(Math.round(amount)), '#fff6ea', 0.7)
     }
+    if (enemy.kind === 'boss') this.shake = Math.min(0.06, Math.max(this.shake, 0.04))
     return { killed, effective }
   }
 
@@ -1609,6 +1677,7 @@ export class Game {
     this.fx.ring(origin.x, origin.z, 0xffb15a)
     this.fx.burst(origin.x, origin.y, origin.z, 0xffe08a, 10, 3.2)
     this.fx.puff(origin.x, origin.y, origin.z)
+    this.shake = Math.min(0.06, Math.max(this.shake, 0.03))
   }
 
   private pending: Enemy[] = []
@@ -1629,7 +1698,7 @@ export class Game {
     }
   }
 
-  /** Keep combat text inside the view and below the HUD. screenLift stacks a second popup upward. */
+  /** Numbers stay on the enemy. The sprite is in world space, so the camera projects it every frame. */
   private popText(
     x: number,
     y: number,
@@ -1637,35 +1706,9 @@ export class Game {
     text: string,
     color: string,
     life = 0.9,
-    screenLift = 0,
+    _screenLift = 0,
   ): void {
-    _v.set(x, y, z).project(this.camera)
-    if (_v.z > 1) {
-      this.fx.popup(x, y, z, text, color, life)
-      return
-    }
-    const rect = this.viewRect
-    const hudBottom = rect.hudBottom
-    const marginX = Math.min(rect.w * 0.42, 18 + text.length * 6.5)
-    let px = (_v.x * 0.5 + 0.5) * rect.w
-    let py = (-_v.y * 0.5 + 0.5) * rect.h
-    px = THREE.MathUtils.clamp(px, marginX, Math.max(marginX, rect.w - marginX))
-    const half = text.length > 8 ? 26 : 18
-    const minCenter = hudBottom + half + 8
-    const maxCenter = rect.h - half - 10
-    py -= screenLift
-    if (py < minCenter) py = Math.min(maxCenter, minCenter + screenLift)
-    py = THREE.MathUtils.clamp(py, minCenter, Math.max(minCenter, maxCenter))
-    _v.x = (px / rect.w) * 2 - 1
-    _v.y = -((py / rect.h) * 2 - 1)
-    _v.unproject(this.camera)
-    this.fx.popup(_v.x, _v.y, _v.z, text, color, life)
-  }
-
-  private keepPopupsUnderHud(): void {
-    const canvas = this.viewRect
-    if (canvas.h < 2) return
-    this.fx.keepUnderHud(this.camera, canvas.h, canvas.hudBottom + 6)
+    this.fx.popup(x, y + 0.15, z, text, color, life)
   }
 
   private kill(enemy: Enemy): void {
@@ -1673,15 +1716,17 @@ export class Game {
     enemy.alive = false
     this.kills += 1
     this.gold += enemy.reward
+    const tint = ENEMIES[enemy.kind].tint
     this.popText(enemy.pos.x, enemy.pos.y + 0.35, enemy.pos.z, `+${enemy.reward}`, '#ffe08a')
-    this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xfff2c4, 12, 3.2)
-    this.fx.debris(enemy.pos.x, enemy.pos.y + 0.2, enemy.pos.z, ENEMIES[enemy.kind].tint)
-    this.fx.puff(enemy.pos.x, enemy.pos.y + 0.15, enemy.pos.z)
-    this.fx.ring(enemy.pos.x, enemy.pos.z, 0xffd27a)
+    this.fx.burst(enemy.pos.x, enemy.pos.y + 0.2, enemy.pos.z, tint, 14, 3.4)
+    this.fx.debris(enemy.pos.x, enemy.pos.y + 0.25, enemy.pos.z, tint)
+    this.fx.boom(enemy.pos.x, enemy.pos.y + 0.35, enemy.pos.z, tint)
+    this.fx.ring(enemy.pos.x, enemy.pos.z, tint)
     this.flyCoins(enemy.pos, 3)
+    this.hud.flashGold()
     audio.play('boom')
     buzz('kill')
-    this.shake = Math.min(0.06, Math.max(this.shake, enemy.kind === 'boss' ? 0.05 : 0.03))
+    if (enemy.kind === 'boss') this.shake = Math.min(0.06, Math.max(this.shake, 0.05))
     const carry = this.carries.find((item) => item.enemy === enemy)
     if (carry) this.rescue(carry)
     this.removeEnemy(enemy)
@@ -1707,7 +1752,8 @@ export class Game {
       this.noteWave(cleared)
       this.waveIndex += 1
       this.phase = 'breather'
-      this.countdown = 3.2
+      this.countdownFull = 4.5
+      this.countdown = this.countdownFull
       this.advanceTutor('breather')
       return
     }
@@ -1983,6 +2029,8 @@ export class Game {
   }
 
   private coachPad(): { x: number; z: number } {
+    const center = this.map.cells.get(cellKey(3, 4))
+    if (this.level.id === 1 && center?.kind === 'build') return center
     let fallback = this.map.hint
     for (const cell of this.map.cells.values()) {
       if (cell.kind !== 'build' || !cell.model.includes('dirt')) continue
@@ -2086,16 +2134,8 @@ export class Game {
   private refreshHud(): void {
     const playing = this.phase === 'ready' || this.phase === 'breather'
     let startLabel = 'Call wave'
-    let countdownLabel: string | null = null
-    if (this.phase === 'breather') {
-      const secs = Math.max(0, Math.ceil(this.countdown))
-      const bonus = earlyBonus(this.waveIndex)
-      if (this.countdown > 0.75) {
-        startLabel = `Call +${bonus}`
-        countdownLabel = `${secs}s`
-      }
-    } else if (this.phase === 'wave') {
-      startLabel = `${this.enemies.length} UFOs`
+    if (this.phase === 'breather' && this.countdown > 0.75) {
+      startLabel = `Call +${earlyBonus(this.waveIndex)}`
     } else if (this.phase === 'victory') startLabel = 'Clear'
     else if (this.phase === 'defeat') startLabel = 'Over'
     const waveNo = Math.min(this.waveIndex + 1, this.level.waves.length)
@@ -2116,7 +2156,8 @@ export class Game {
       hint: false,
       startLabel,
       startEnabled: playing,
-      countdownLabel,
+      countdownLabel: null,
+      countdownFull: this.countdownFull,
       preview,
       bannerTitle: this.bannerTitle,
       bannerChips: this.bannerChips,
@@ -2318,6 +2359,7 @@ export class Game {
     this.phase = mode === 'title' ? 'title' : 'ready'
     this.waveIndex = 0
     this.countdown = 0
+    this.countdownFull = 3.6
     this.kills = 0
     this.leaks = 0
     this.spawned = 0
@@ -2405,7 +2447,10 @@ export class Game {
       (step === 5 && reason === 'upgrade')
     if (!match) return
     this.tutorStep += 1
-    if (this.tutorStep === 3) this.countdown = 2.6
+    if (this.tutorStep === 3) {
+      this.countdownFull = 2.6
+      this.countdown = this.countdownFull
+    }
     if (this.tutorStep > 5) {
       this.tutorStep = 0
       markTutorial()

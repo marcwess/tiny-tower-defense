@@ -37,6 +37,13 @@ interface Ring {
   max: number
 }
 
+interface Flash {
+  sprite: THREE.Sprite
+  life: number
+  max: number
+  grow: number
+}
+
 const MAX = 420
 const POP_W = 256
 const POP_H = 64
@@ -64,6 +71,8 @@ export class Fx {
   private readonly scratchColor = new THREE.Color()
   private readonly glyphs = new Map<string, THREE.CanvasTexture>()
   private partFree: Particle[] = []
+  private flashes: Flash[] = []
+  private flashCursor = 0
 
   constructor(private scene: THREE.Scene) {
     const geo = new THREE.BufferGeometry()
@@ -109,6 +118,21 @@ export class Fx {
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
     })
+    const flashBase = new THREE.SpriteMaterial({
+      color: 0xfff4c4,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+    for (let i = 0; i < 10; i++) {
+      const sprite = new THREE.Sprite(flashBase.clone())
+      sprite.visible = false
+      sprite.scale.setScalar(0.2)
+      sprite.position.set(0, -40, 0)
+      scene.add(sprite)
+      this.flashes.push({ sprite, life: 0, max: 0.12, grow: 0.6 })
+    }
+
     for (let i = 0; i < MAX; i++) {
       this.partFree.push({
         life: 0,
@@ -174,11 +198,59 @@ export class Fx {
       popup.sprite.position.set(2, 1.1, 6)
       popup.sprite.frustumCulled = false
     }
+    const flash = this.flashes[0]
+    flash.sprite.visible = true
+    flash.sprite.position.set(2.6, 0.8, 6)
     return () => {
       this.parkChunk(chunk)
       this.parkRing(ring)
       if (popup) this.parkPopup(popup)
+      flash.sprite.visible = false
+      flash.sprite.position.set(0, -40, 0)
     }
+  }
+
+  /** A short muzzle spark. Slots and materials are created up front. */
+  flash(x: number, y: number, z: number, color: number): void {
+    this.playFlash(x, y, z, color, 0.1, 0.55)
+  }
+
+  /** A bigger colored pop when a UFO breaks. */
+  boom(x: number, y: number, z: number, color: number): void {
+    this.playFlash(x, y, z, color, 0.28, 1.25)
+  }
+
+  private playFlash(x: number, y: number, z: number, color: number, life: number, grow: number): void {
+    const slot = this.flashes[this.flashCursor % this.flashes.length]
+    this.flashCursor += 1
+    slot.life = life
+    slot.max = life
+    slot.grow = grow
+    slot.sprite.visible = true
+    slot.sprite.position.set(x, y, z)
+    slot.sprite.scale.setScalar(0.08)
+    const mat = slot.sprite.material as THREE.SpriteMaterial
+    mat.color.set(color)
+    mat.opacity = 1
+  }
+
+  /** One pooled spark behind a cannonball or bolt. */
+  trail(x: number, y: number, z: number, color: number): void {
+    const part = this.takePart()
+    if (!part) return
+    const c = this.scratchColor.set(color)
+    part.life = 0.2
+    part.max = 0.2
+    part.x = x
+    part.y = y
+    part.z = z
+    part.vx = 0
+    part.vy = 0.15
+    part.vz = 0
+    part.r = c.r
+    part.g = c.g
+    part.b = c.b
+    this.parts.push(part)
   }
 
   private takePart(): Particle | null {
@@ -291,7 +363,7 @@ export class Fx {
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.lineJoin = 'round'
-    ctx.lineWidth = 6
+    ctx.lineWidth = 8
     ctx.strokeStyle = 'rgba(20, 24, 32, 0.88)'
     ctx.strokeText(text, POP_W / 2, POP_H / 2 + 1)
     ctx.fillStyle = color
@@ -319,7 +391,7 @@ export class Fx {
     slot.sprite.visible = true
     slot.life = life
     slot.max = life
-    slot.vy = 0.65
+    slot.vy = 0.35
     slot.active = true
     this.popups.push(slot)
     perf.notePopup()
@@ -473,6 +545,19 @@ export class Fx {
       if (popup.life <= 0) {
         this.parkPopup(popup)
         this.popups.splice(i, 1)
+      }
+    }
+    for (const slot of this.flashes) {
+      if (slot.life <= 0) continue
+      slot.life -= dt
+      const k = 1 - slot.life / slot.max
+      const swell = Math.sin(Math.min(1, k) * Math.PI)
+      slot.sprite.scale.setScalar(Math.max(0.04, slot.grow * swell))
+      const mat = slot.sprite.material as THREE.SpriteMaterial
+      mat.opacity = Math.max(0, 1 - k)
+      if (slot.life <= 0) {
+        slot.sprite.visible = false
+        slot.sprite.position.set(0, -40, 0)
       }
     }
 

@@ -59,6 +59,7 @@ export interface HudState {
   petMax: number
   phase: string
   countdown: number
+  countdownFull: number
   enemies: number
   speed: number
   muted: boolean
@@ -105,6 +106,8 @@ export class Hud {
   private muteEl: HTMLButtonElement | null
   private speedEl: HTMLButtonElement
   private startEl: HTMLButtonElement
+  private startLabelEl: HTMLElement
+  private startRing: SVGCircleElement
   private hintEl: HTMLElement
   private cardEl: HTMLElement
   private blurbEl: HTMLElement
@@ -150,7 +153,7 @@ export class Hud {
           <div class="pill gold" id="gold"><img alt="" src="${asset('assets/icons/coin.png')}" /><span>0</span></div>
           <div class="pill wave" id="wave"><img alt="" src="${asset('assets/icons/flag.png')}" /><span>1/9</span></div>
           <div class="pill pets" id="pets"><img alt="" src="${heartUrl()}" /><span>5</span></div>
-          <button type="button" id="pause" class="round" aria-label="Pause"><img alt="" src="${asset('assets/ui/mobile-controls/Sprites/Icons/Default/icon_pause.png')}" /></button>
+          <button type="button" id="pause" class="round hud-round" aria-label="Pause"><span class="pause-glyph"></span></button>
         </header>
         <div id="banner" hidden>
           <p id="banner-title"></p>
@@ -169,7 +172,10 @@ export class Hud {
             <button type="button" id="speed" class="btn yellow">1×</button>
             <button type="button" id="dmg" class="btn yellow" hidden aria-pressed="true">Nums</button>
             <div id="count" hidden></div>
-            <button type="button" id="start" class="btn green">Call</button>
+            <button type="button" id="start" class="btn green">
+              <svg class="count-ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="18"></circle></svg>
+              <span id="start-label">Call wave</span>
+            </button>
           </div>
         </div>
       </div>
@@ -251,6 +257,8 @@ export class Hud {
     this.soundBtn = this.need('#pause-sound') as HTMLButtonElement
     this.speedEl = this.need('#speed') as HTMLButtonElement
     this.startEl = this.need('#start') as HTMLButtonElement
+    this.startLabelEl = this.need('#start-label')
+    this.startRing = this.need('#start .count-ring circle') as unknown as SVGCircleElement
     this.hintEl = this.need('#hint')
     this.cardEl = this.need('#card')
     this.blurbEl = this.need('#card-blurb')
@@ -444,10 +452,16 @@ export class Hud {
     this.damageEl.textContent = state.damageNumbers ? 'Nums' : 'Nums off'
     this.damageEl.setAttribute('aria-pressed', state.damageNumbers ? 'true' : 'false')
     this.damageEl.classList.toggle('pressed', state.damageNumbers)
-    this.startEl.textContent = state.startLabel
+    this.startLabelEl.textContent = state.startLabel
     this.startEl.disabled = !state.startEnabled
-    this.countEl.hidden = !state.countdownLabel
-    this.countEl.textContent = state.countdownLabel ?? ''
+    this.countEl.hidden = true
+    const counting = state.countdown > 0.05 && (state.phase === 'ready' || state.phase === 'breather')
+    this.startEl.classList.toggle('counting', counting)
+    const length = 2 * Math.PI * 18
+    const full = Math.max(0.2, state.countdownFull || 1)
+    const left = counting ? Math.max(0, Math.min(1, state.countdown / full)) : 0
+    this.startRing.style.strokeDasharray = `${length}`
+    this.startRing.style.strokeDashoffset = `${length * (1 - left)}`
     this.hintEl.hidden = true
     this.fillChips(this.previewEl, state.preview, 'chip')
     this.bannerEl.hidden = !state.bannerTitle
@@ -493,6 +507,20 @@ export class Hud {
     this.renderSettings(state)
   }
 
+  private ringSpots(count: number): Array<{ x: number; y: number; pillX: number; pillY: number }> {
+    const angles = count <= 2 ? [-Math.PI / 2, Math.PI / 2] : [-Math.PI / 2, 0, Math.PI / 2, Math.PI]
+    const radius = 88
+    return angles.slice(0, count).map((angle) => {
+      const pill = radius + 40
+      return {
+        x: Math.cos(angle) * radius,
+        y: Math.sin(angle) * radius,
+        pillX: Math.cos(angle) * pill,
+        pillY: Math.sin(angle) * pill,
+      }
+    })
+  }
+
   private renderRadial(selection: SelectionView | null): void {
     if (!selection || selection.actions.length === 0 || !selection.anchor) {
       this.radialEl.hidden = true
@@ -501,32 +529,28 @@ export class Hud {
       return
     }
     this.radialEl.hidden = false
-    const count = selection.actions.length
-    const spread = count <= 2 ? 1.15 : 0.72
-    const radius = count <= 2 ? 74 : 86
-    const half = 40
-    const margin = 8
+    const spots = this.ringSpots(selection.actions.length)
     let minX = 0
     let maxX = 0
     let minY = 0
     let maxY = 0
-    selection.actions.forEach((_, index) => {
-      const angle = -Math.PI / 2 + (index - (count - 1) / 2) * spread
-      const x = Math.cos(angle) * radius
-      const y = Math.sin(angle) * radius
-      minX = Math.min(minX, x - half)
-      maxX = Math.max(maxX, x + half)
-      minY = Math.min(minY, y - half)
-      maxY = Math.max(maxY, y + half)
-    })
+    for (const spot of spots) {
+      minX = Math.min(minX, spot.x - 34, spot.pillX - 28)
+      maxX = Math.max(maxX, spot.x + 34, spot.pillX + 28)
+      minY = Math.min(minY, spot.y - 34, spot.pillY - 14)
+      maxY = Math.max(maxY, spot.y + 34, spot.pillY + 14)
+    }
     const viewW = window.innerWidth
     const viewH = window.innerHeight
+    const topBar = document.querySelector('#top')?.getBoundingClientRect().bottom ?? 58
+    const bottomBar = document.querySelector('#actions')?.getBoundingClientRect().top ?? viewH - 72
+    const margin = 8
     let originX = selection.anchor.x
     let originY = selection.anchor.y
     if (originX + minX < margin) originX = margin - minX
     if (originX + maxX > viewW - margin) originX = viewW - margin - maxX
-    if (originY + minY < margin) originY = margin - minY
-    if (originY + maxY > viewH - 96) originY = viewH - 96 - maxY
+    if (originY + minY < topBar + 4) originY = topBar + 4 - minY
+    if (originY + maxY > bottomBar - 6) originY = bottomBar - 6 - maxY
     this.radialEl.style.left = `${originX}px`
     this.radialEl.style.top = `${originY}px`
     this.actions = selection.actions
@@ -535,35 +559,36 @@ export class Hud {
       this.signature = sig
       this.radialEl.replaceChildren()
       const coin = asset('assets/icons/coin.png')
+      const arrow = asset('assets/ui/ui-pack/PNG/Extra/Double/icon_arrow_up_dark.png')
       selection.actions.forEach((action, index) => {
+        const spot = spots[index]
         const button = document.createElement('button')
         button.type = 'button'
         button.dataset.part = action.id
         button.className = `radial-btn ${action.tone}`
-        const angle = -Math.PI / 2 + (index - (count - 1) / 2) * spread
-        button.style.left = `${Math.cos(angle) * radius}px`
-        button.style.top = `${Math.sin(angle) * radius}px`
-        const thumb = action.id === 'upgrade' || action.id === 'sell' ? '' : pieceThumbnail(action.id)
+        button.style.left = `${spot.x}px`
+        button.style.top = `${spot.y}px`
+        button.setAttribute('aria-label', action.label)
+        const thumb =
+          action.id === 'upgrade' ? arrow : action.id === 'sell' ? coin : pieceThumbnail(action.id)
         if (thumb) {
           const img = document.createElement('img')
           img.alt = ''
           img.src = thumb
           button.append(img)
         }
-        const name = document.createElement('span')
-        name.className = 'radial-name'
-        name.textContent = action.label
-        const cost = document.createElement('span')
-        cost.className = 'radial-cost'
+        const pill = document.createElement('span')
+        pill.className = 'radial-pill'
+        pill.style.left = `${spot.pillX}px`
+        pill.style.top = `${spot.pillY}px`
         const coinImg = document.createElement('img')
         coinImg.alt = ''
         coinImg.src = coin
         const num = document.createElement('span')
         num.className = 'cost-num'
         num.textContent = action.cost
-        cost.append(coinImg, num)
-        button.append(name, cost)
-        this.radialEl.append(button)
+        pill.append(coinImg, num)
+        this.radialEl.append(button, pill)
       })
     }
     const buttons = this.radialEl.querySelectorAll('button')
@@ -572,7 +597,8 @@ export class Hud {
       if (!button) return
       button.classList.toggle('off', !action.enabled)
       button.setAttribute('aria-disabled', action.enabled ? 'false' : 'true')
-      const cost = button.querySelector('.cost-num')
+      const pill = this.radialEl.querySelectorAll('.radial-pill')[index]
+      const cost = pill?.querySelector('.cost-num')
       if (cost && cost.textContent !== action.cost) cost.textContent = action.cost
     })
   }
@@ -596,6 +622,14 @@ export class Hud {
         }
       }
     }
+    const viewW = window.innerWidth
+    const viewH = window.innerHeight
+    const room = 132
+    const flip = x > viewW - room
+    this.handEl.classList.toggle('flip', flip)
+    if (flip) x = Math.max(room, Math.min(viewW - 20, x))
+    else x = Math.max(20, Math.min(viewW - room, x))
+    y = Math.max(72, Math.min(viewH - 150, y))
     this.handEl.style.left = `${x}px`
     this.handEl.style.top = `${y}px`
   }
@@ -688,7 +722,7 @@ export class Hud {
       row.append(swatch)
       if (kind === 'chip') {
         const label = document.createElement('span')
-        label.textContent = `${chip.count}× ${chip.name} · ${chip.weak}`
+        label.textContent = String(chip.count)
         row.append(label)
       } else {
         const copy = document.createElement('span')

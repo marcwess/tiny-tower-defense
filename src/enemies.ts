@@ -335,8 +335,9 @@ export class Enemy {
       if (!mesh.isMesh) return
       const mat = mesh.material as THREE.MeshLambertMaterial
       if (mat.emissive) {
-        mat.emissive.set(0xfff4ea)
-        mat.emissiveIntensity = this.flash > 0 ? 1.35 : 0
+        const frosted = this.slowTimer > 0
+        mat.emissive.set(frosted ? 0x6eb6ff : 0xfff4ea)
+        mat.emissiveIntensity = frosted ? 0.9 : this.flash > 0 ? 1.35 : 0
       }
     })
     const pulse = 1 + (this.flash > 0 ? this.flash * 1.6 : 0)

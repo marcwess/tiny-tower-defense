@@ -66,68 +66,73 @@ const MEADOW_PAINT: PaintCell[] = [
 
 /** Meadow only. Faster, denser, lighter. Levels 2 and 3 keep their own tables. */
 const MEADOW_WAVES: WaveDef[] = [
-  { groups: [{ kind: 'scout', count: 8, interval: 1.05 }] },
+  { groups: [{ kind: 'scout', count: 6, interval: 1.7 }] },
   {
     groups: [
-      { kind: 'scout', count: 8, interval: 0.48 },
-      { kind: 'swarm', count: 18, interval: 0.2 },
+      { kind: 'scout', count: 4, interval: 2.2 },
+      { kind: 'swarm', count: 5, interval: 2.0 },
+      { kind: 'scout', count: 4, interval: 2.2 },
     ],
   },
   {
     groups: [
-      { kind: 'swarm', count: 14, interval: 0.18 },
-      { kind: 'tank', count: 2, interval: 1.05 },
+      { kind: 'swarm', count: 4, interval: 2.1 },
+      { kind: 'tank', count: 2, interval: 3.6 },
+      { kind: 'swarm', count: 4, interval: 2.1 },
     ],
   },
   {
     groups: [
-      { kind: 'shield', count: 4, interval: 0.7 },
-      { kind: 'scout', count: 10, interval: 0.36 },
+      { kind: 'shield', count: 3, interval: 2.6 },
+      { kind: 'scout', count: 5, interval: 2.2 },
+      { kind: 'swarm', count: 3, interval: 2.2 },
     ],
   },
   {
     groups: [
-      { kind: 'tank', count: 1, interval: 0.2, entry: 0.94, hpMul: 1.55 },
-      { kind: 'tank', count: 3, interval: 0.95 },
-      { kind: 'swarm', count: 16, interval: 0.16 },
+      { kind: 'tank', count: 1, interval: 0.2, entry: 0.93, hpMul: 2.2 },
+      { kind: 'tank', count: 2, interval: 3.4 },
+      { kind: 'swarm', count: 4, interval: 2.3 },
+      { kind: 'scout', count: 3, interval: 2.2 },
     ],
   },
   {
     groups: [
-      { kind: 'shield', count: 3, interval: 0.62 },
-      { kind: 'scout', count: 8, interval: 0.32 },
-      { kind: 'swarm', count: 14, interval: 0.16 },
+      { kind: 'shield', count: 3, interval: 2.6 },
+      { kind: 'swarm', count: 4, interval: 2.2 },
+      { kind: 'scout', count: 4, interval: 2.2 },
     ],
   },
   {
     groups: [
-      { kind: 'tank', count: 4, interval: 0.85 },
-      { kind: 'scout', count: 10, interval: 0.3 },
+      { kind: 'tank', count: 3, interval: 3.4 },
+      { kind: 'scout', count: 4, interval: 2.4 },
+      { kind: 'swarm', count: 3, interval: 2.2 },
     ],
   },
   {
     groups: [
-      { kind: 'shield', count: 5, interval: 0.55 },
-      { kind: 'swarm', count: 18, interval: 0.14 },
-      { kind: 'tank', count: 2, interval: 0.9 },
+      { kind: 'shield', count: 3, interval: 2.5 },
+      { kind: 'swarm', count: 4, interval: 2.2 },
+      { kind: 'tank', count: 2, interval: 3.2 },
     ],
   },
   {
     groups: [
-      { kind: 'boss', count: 1, interval: 0.2, hpMul: 1.4 },
-      { kind: 'swarm', count: 14, interval: 0.18 },
-      { kind: 'tank', count: 2, interval: 1.0 },
-      { kind: 'shield', count: 2, interval: 0.7 },
+      { kind: 'boss', count: 1, interval: 0.2, hpMul: 1.55 },
+      { kind: 'swarm', count: 3, interval: 2.4 },
+      { kind: 'tank', count: 1, interval: 2.4 },
+      { kind: 'shield', count: 2, interval: 2.6 },
     ],
   },
 ]
 
 const MEADOW_PETS: PetSpot[] = [
-  { model: 'animal-cat', x: 2.42, z: 0.42, scale: 0.46 },
-  { model: 'animal-bunny', x: 3.55, z: 0.38, scale: 0.44 },
-  { model: 'animal-dog', x: 1.72, z: 0.28, scale: 0.46 },
-  { model: 'animal-fox', x: 4.22, z: 0.26, scale: 0.44 },
-  { model: 'animal-chick', x: 3.02, z: 0.12, scale: 0.38 },
+  { model: 'animal-cat', x: 2.42, z: 0.42, scale: 0.62 },
+  { model: 'animal-bunny', x: 3.55, z: 0.38, scale: 0.58 },
+  { model: 'animal-dog', x: 1.72, z: 0.28, scale: 0.62 },
+  { model: 'animal-fox', x: 4.22, z: 0.26, scale: 0.58 },
+  { model: 'animal-chick', x: 3.02, z: 0.12, scale: 0.5 },
 ]
 
 function riverRow(model: string, bridgeX: number): PaintCell[] {
