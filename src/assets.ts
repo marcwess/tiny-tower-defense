@@ -535,7 +535,7 @@ export function renderAppIcon(): string {
   sun.position.set(3, 6, 4)
   scene.add(sun)
   const ground = new THREE.Mesh(
-    new THREE.CircleGeometry(3.2, 40),
+    new THREE.CircleGeometry(1.65, 40),
     new THREE.MeshLambertMaterial({ color: 0x7dba56 }),
   )
   ground.rotation.x = -Math.PI / 2
@@ -574,13 +574,14 @@ export function renderAppIcon(): string {
   const box = new THREE.Box3().setFromObject(stack)
   box.expandByObject(ufo)
   box.expandByObject(pet.root)
+  box.expandByObject(ground)
   const center = box.getCenter(new THREE.Vector3())
   const extent = box.getSize(new THREE.Vector3())
   const radius = Math.max(extent.x, extent.y, extent.z) * 0.5
   const cam = new THREE.PerspectiveCamera(28, 1, 0.05, 40)
-  const dist = radius / Math.sin((28 * Math.PI) / 180 / 2) / 0.76
-  cam.position.set(center.x + dist * 0.42, center.y + dist * 0.32, center.z + dist * 0.74)
-  cam.lookAt(center.x, center.y, center.z)
+  const dist = radius / Math.sin((28 * Math.PI) / 180 / 2) / 0.6
+  cam.position.set(center.x + dist * 0.42, center.y + dist * 0.28, center.z + dist * 0.74)
+  cam.lookAt(center.x, center.y - radius * 0.08, center.z)
   renderer.render(scene, cam)
   const url = renderer.domElement.toDataURL('image/png')
   renderer.forceContextLoss()

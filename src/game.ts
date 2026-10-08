@@ -495,9 +495,9 @@ export class Game {
       const arr = new Float32Array(count * 3)
       this.snowFall = []
       for (let i = 0; i < count; i++) {
-        arr[i * 3] = 0.4 + Math.random() * 5.2
-        arr[i * 3 + 1] = 1.4 + Math.random() * 4.2
-        arr[i * 3 + 2] = 0.4 + Math.random() * 9.2
+        arr[i * 3] = 1.1 + Math.random() * 3.8
+        arr[i * 3 + 1] = 2.4 + Math.random() * 3.4
+        arr[i * 3 + 2] = 2.2 + Math.random() * 6.2
         this.snowFall.push(0.0035 + Math.random() * 0.007)
       }
       const geo = new THREE.BufferGeometry()
@@ -527,11 +527,12 @@ export class Game {
     for (let i = 0; i < this.snowFall.length; i++) {
       arr[i * 3 + 1] -= this.snowFall[i]
       arr[i * 3] += Math.sin(this.visualTime * 0.7 + i) * 0.0015
-      if (arr[i * 3] < 0.25 || arr[i * 3] > 5.75) arr[i * 3] = 0.4 + Math.random() * 5.2
-      if (arr[i * 3 + 1] < 1.15) {
-        arr[i * 3 + 1] = 5.4
-        arr[i * 3] = 0.4 + Math.random() * 5.2
-        arr[i * 3 + 2] = 0.4 + Math.random() * 9.2
+      if (arr[i * 3] < 0.9 || arr[i * 3] > 5.1) arr[i * 3] = 1.1 + Math.random() * 3.8
+      if (arr[i * 3 + 2] < 1.8 || arr[i * 3 + 2] > 8.8) arr[i * 3 + 2] = 2.2 + Math.random() * 6.2
+      if (arr[i * 3 + 1] < 2.05) {
+        arr[i * 3 + 1] = 5.6
+        arr[i * 3] = 1.1 + Math.random() * 3.8
+        arr[i * 3 + 2] = 2.2 + Math.random() * 6.2
       }
     }
     attr.needsUpdate = true
