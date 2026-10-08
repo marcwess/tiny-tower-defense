@@ -34,6 +34,19 @@ function stopPreview() {
   }
 }
 
+async function clipTray(page) {
+  return page.evaluate(() => {
+    const buttons = [...document.querySelectorAll('#tray button')]
+    const rects = buttons.map((button) => button.getBoundingClientRect()).filter((rect) => rect.width > 2 && rect.height > 2)
+    if (!rects.length) return { x: 0, y: 0, width: 0, height: 0 }
+    const left = Math.max(0, Math.min(...rects.map((rect) => rect.left)))
+    const top = Math.max(0, Math.min(...rects.map((rect) => rect.top)))
+    const right = Math.min(window.innerWidth, Math.max(...rects.map((rect) => rect.right)))
+    const bottom = Math.min(window.innerHeight, Math.max(...rects.map((rect) => rect.bottom)))
+    return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) }
+  })
+}
+
 async function waitForServer() {
   for (let i = 0; i < 50; i++) {
     if (preview.exitCode !== null) {
@@ -151,15 +164,15 @@ try {
     api.buy(2, 7, 'roof-b')
     api.buy(2, 7, 'cannon')
     api.deselect()
-    api.cameraLook(4.73, 5.81, -0.67, 2, 1.9, 7)
+    api.cameraLook(6.23, 8.66, -4.89, 2, 2.6, 7)
   })
   await delay(500)
   const towerFrame = await page.evaluate(() => ({
-    spire: window.__TINY_TD__.project(2, 7, 4.0),
+    spire: window.__TINY_TD__.project(2, 7, 5.6),
     base: window.__TINY_TD__.project(2, 7, 0.3),
   }))
   console.log('tower frame', JSON.stringify(towerFrame))
-  if (!towerFrame.spire || towerFrame.spire.y < 96 || !towerFrame.base || towerFrame.base.y > 640) {
+  if (!towerFrame.spire || towerFrame.spire.y < 110 || !towerFrame.base || towerFrame.base.y > 680) {
     throw new Error(`stacked tower hits the HUD: ${JSON.stringify(towerFrame)}`)
   }
   await page.screenshot({ path: `${OUT}/stacked_tower.png` })
@@ -191,15 +204,8 @@ try {
   console.log('panel', JSON.stringify(boxes))
   await page.screenshot({ path: `${OUT}/build_panel.png` })
   await page.screenshot({ path: `${OUT}/build_panel_360.png` })
-  const labelClip = await page.evaluate(() => {
-    const buttons = [...document.querySelectorAll('#tray button')]
-    const rects = buttons.map((button) => button.getBoundingClientRect())
-    const left = Math.min(...rects.map((rect) => rect.left))
-    const top = Math.min(...rects.map((rect) => rect.top))
-    const right = Math.max(...rects.map((rect) => rect.right))
-    const bottom = Math.max(...rects.map((rect) => rect.bottom))
-    return { x: left, y: top, width: right - left, height: bottom - top }
-  })
+  const labelClip = await clipTray(page)
+  if (labelClip.width < 8) throw new Error(`shop labels missing at 360: ${JSON.stringify(boxes)}`)
   await page.screenshot({ path: `${OUT}/shop_labels_360.png`, clip: labelClip })
 
   await page.setViewportSize({ width: 320, height: 780 })
@@ -222,15 +228,8 @@ try {
   })
   console.log('panel320', JSON.stringify(boxes320))
   await page.screenshot({ path: `${OUT}/build_panel_320.png` })
-  const labelClip320 = await page.evaluate(() => {
-    const buttons = [...document.querySelectorAll('#tray button')]
-    const rects = buttons.map((button) => button.getBoundingClientRect())
-    const left = Math.min(...rects.map((rect) => rect.left))
-    const top = Math.min(...rects.map((rect) => rect.top))
-    const right = Math.max(...rects.map((rect) => rect.right))
-    const bottom = Math.max(...rects.map((rect) => rect.bottom))
-    return { x: left, y: top, width: right - left, height: bottom - top }
-  })
+  const labelClip320 = await clipTray(page)
+  if (labelClip320.width < 8) throw new Error(`shop labels missing at 320: ${JSON.stringify(boxes320)}`)
   await page.screenshot({ path: `${OUT}/shop_labels_320.png`, clip: labelClip320 })
   await page.setViewportSize({ width: 390, height: 844 })
 

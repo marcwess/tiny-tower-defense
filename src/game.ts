@@ -1378,6 +1378,7 @@ export class Game {
         if (!cell) return
         this.selected = cell
         this.syncSelection()
+        this.refreshHud()
       },
       debugWin: () => this.win(),
       debugLose: () => this.lose(),

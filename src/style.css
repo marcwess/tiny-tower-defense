@@ -156,7 +156,7 @@ html, body, #app {
   overflow-wrap: anywhere;
 }
 
-#card-stats { color: #2d6a45; margin-top: 4px; line-height: 1.55; padding-top: 0.08em; }
+#card-stats { color: #2d6a45; margin-top: 4px; line-height: 1.8; padding-top: 0.12em; }
 
 #card-blurb {
   margin-top: 6px;
@@ -226,8 +226,8 @@ html, body, #app {
   overflow: visible;
   white-space: nowrap;
   text-align: center;
-  line-height: 1.55;
-  padding: 0.16em 0.08em 0;
+  line-height: 1.85;
+  padding: 0.06em 0.1em 0;
 }
 
 .piece-name { font-size: 11px; }
@@ -324,7 +324,7 @@ h1 {
   #card { padding: 14px 6px 12px; }
   #tray { gap: 4px; }
   .piece { padding: 5px 2px 8px; }
-  .piece-name, .piece-effect { font-size: 10px; padding: 0.18em 0.04em 0; }
+  .piece-name, .piece-effect { font-size: 10px; line-height: 1.9; padding: 0.08em 0.06em 0; }
   .thumb { width: 36px; height: 36px; }
 }
 
