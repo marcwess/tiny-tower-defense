@@ -545,10 +545,10 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
   pointer-events: none;
 }
 
-#coach[data-side='down'] #coach-arrow { left: 50%; bottom: -8px; transform: translateX(-50%) rotate(90deg); }
-#coach[data-side='up'] #coach-arrow { left: 50%; top: -8px; transform: translateX(-50%) rotate(-90deg); }
-#coach[data-side='left'] #coach-arrow { left: -8px; top: 50%; transform: translateY(-50%) rotate(180deg); }
-#coach[data-side='right'] #coach-arrow { right: -8px; top: 50%; transform: translateY(-50%); }
+#coach[data-side='down'] #coach-arrow { left: 50%; bottom: -8px; transform: translateX(-50%); }
+#coach[data-side='up'] #coach-arrow { left: 50%; top: -8px; transform: translateX(-50%) rotate(180deg); }
+#coach[data-side='left'] #coach-arrow { left: -8px; top: 50%; transform: translateY(-50%) rotate(90deg); }
+#coach[data-side='right'] #coach-arrow { right: -8px; top: 50%; transform: translateY(-50%) rotate(-90deg); }
 
 #coach-text {
   margin: 0 0 6px;

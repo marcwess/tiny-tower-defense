@@ -472,8 +472,9 @@ try {
       if (done.leaks !== 0 || done.pets < 5) {
         throw new Error(`level 2 should hold every pet under pressure: ${JSON.stringify(done)}`)
       }
-      if (!(closest > 0.2 && closest < 3.3)) {
-        throw new Error(`level 2 carriers should nearly reach the gate: ${closest}`)
+      const near = (done.log ?? []).filter((row) => row.gate > 0.15 && row.gate < 2.35)
+      if (near.length < 2) {
+        throw new Error(`level 2 needs two waves within about 2 of the gate: ${JSON.stringify(done.log)}`)
       }
     }
     if (levelId === 3) {

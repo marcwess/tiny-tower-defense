@@ -550,7 +550,7 @@ export class Hud {
     const target = coach.target
     const cx = (target.l + target.r) / 2
     const cy = (target.t + target.b) / 2
-    const candidates = [
+    const candidates: Array<{ x: number; y: number; side: string; prefer?: boolean }> = [
       { x: cx - bubbleW / 2, y: target.t - gap - bubbleH, side: 'down' },
       { x: cx - bubbleW / 2, y: target.t - bubbleH - 48, side: 'down' },
       { x: cx - bubbleW / 2, y: target.b + gap, side: 'up' },
@@ -561,6 +561,15 @@ export class Hud {
       { x: margin, y: target.t - gap - bubbleH, side: 'down' },
       { x: vw - margin - bubbleW, y: target.t - gap - bubbleH, side: 'down' },
     ]
+    const panel = coach.avoid.find((box) => box.r - box.l > vw * 0.55 && box.b - box.t > 70)
+    if (panel) {
+      candidates.unshift({
+        x: cx - bubbleW / 2,
+        y: panel.t - gap - bubbleH,
+        side: 'down',
+        prefer: true,
+      })
+    }
     for (const avoid of coach.avoid) {
       const y = avoid.t - gap - bubbleH
       if (Math.abs(cy - (y + bubbleH / 2)) > 220) continue
@@ -579,6 +588,7 @@ export class Hud {
         if (this.boxesOverlap(rect, this.padBox(avoid, 6))) score += 2500
       }
       if (this.hitsLane(rect, coach.lane, cx, cy)) score += dist < 200 ? 110 : 800
+      if (candidate.prefer && score < 4000) score -= 1800
       if (score < best.score) best = { x, y, side: candidate.side, score }
     }
     const bx = best.x + bubbleW / 2

@@ -229,6 +229,9 @@ export class Game {
   private bannerChips: WaveChip[] | null = null
   private bannerT = 0
   private effectiveAt = new Map<number, number>()
+  private lastEffective = -10
+  private lastEffX = 0
+  private lastEffZ = 0
   private highlight: THREE.Mesh
   private rangeMesh: THREE.Mesh
   private hintMarker: THREE.Sprite
@@ -492,9 +495,9 @@ export class Game {
       const arr = new Float32Array(count * 3)
       this.snowFall = []
       for (let i = 0; i < count; i++) {
-        arr[i * 3] = -1.2 + Math.random() * 8.4
-        arr[i * 3 + 1] = 0.4 + Math.random() * 4.6
-        arr[i * 3 + 2] = -1.2 + Math.random() * 12.4
+        arr[i * 3] = 0.4 + Math.random() * 5.2
+        arr[i * 3 + 1] = 1.4 + Math.random() * 4.2
+        arr[i * 3 + 2] = 0.4 + Math.random() * 9.2
         this.snowFall.push(0.0035 + Math.random() * 0.007)
       }
       const geo = new THREE.BufferGeometry()
@@ -523,8 +526,13 @@ export class Game {
     const arr = attr.array as Float32Array
     for (let i = 0; i < this.snowFall.length; i++) {
       arr[i * 3 + 1] -= this.snowFall[i]
-      if (arr[i * 3 + 1] < 0.15) arr[i * 3 + 1] = 4.8
       arr[i * 3] += Math.sin(this.visualTime * 0.7 + i) * 0.0015
+      if (arr[i * 3] < 0.25 || arr[i * 3] > 5.75) arr[i * 3] = 0.4 + Math.random() * 5.2
+      if (arr[i * 3 + 1] < 1.15) {
+        arr[i * 3 + 1] = 5.4
+        arr[i * 3] = 0.4 + Math.random() * 5.2
+        arr[i * 3 + 2] = 0.4 + Math.random() * 9.2
+      }
     }
     attr.needsUpdate = true
   }
@@ -542,8 +550,8 @@ export class Game {
   }
 
   /**
-   * Fit the board, the path, the spawn lead-in, and the pen inside the HUD
-   * and the bottom bar. Portrait and desktop share the same fit.
+   * Same 3/4 yaw as the main-branch portrait. Distance is solved so the path,
+   * spawn, and pen fill the width. Decorative border tiles may crop.
    */
   private framing(): {
     fov: number
@@ -558,37 +566,53 @@ export class Game {
     const aspect = this.camera.aspect || 1
     const pose =
       aspect < 0.62
-        ? { fov: 42, pitch: 1.08, azimuth: 2.85, lookY: 0.12 }
+        ? { fov: 42, pitch: 0.76, azimuth: 2.8, lookY: 0.25 }
         : aspect < 1.05
-          ? { fov: 36, pitch: 0.86, azimuth: 2.42, lookY: 0.12 }
-          : { fov: 30, pitch: 0.78, azimuth: 2.28, lookY: 0.08 }
+          ? { fov: 38, pitch: 0.74, azimuth: 2.5, lookY: 0.18 }
+          : { fov: 30, pitch: 0.72, azimuth: 2.25, lookY: 0.12 }
     if (!this.map) {
-      const distance = aspect < 0.62 ? 20.2 : aspect < 1.05 ? 18.4 : 14.5
-      return { ...pose, distance, tx: 3, ty: 0.15, tz: 5 }
+      const distance = aspect < 0.62 ? 20.2 : aspect < 1.05 ? 18.4 : 12.2
+      const tx = aspect < 0.62 ? 2.6 : aspect < 1.05 ? 3 : 3.15
+      const tz = aspect < 0.62 ? 4.7 : aspect < 1.05 ? 4.8 : 4.9
+      return { ...pose, distance, tx, ty: pose.lookY, tz }
     }
     const solved = this.solveFrame(pose)
-    return { ...pose, distance: solved.distance, tx: solved.tx, ty: 0.12, tz: solved.tz }
+    return { ...pose, distance: solved.distance, tx: solved.tx, ty: pose.lookY, tz: solved.tz }
   }
 
   private viewInsets(): { w: number; h: number; l: number; t: number; r: number; b: number } {
     const w = this.app.clientWidth || window.innerWidth
     const h = this.app.clientHeight || window.innerHeight
-    const aspect = w / Math.max(1, h)
-    const top = aspect < 0.7 ? 100 : aspect < 1.15 ? 88 : 118
-    const bottom = aspect < 0.7 ? 136 : aspect < 1.15 ? 108 : 156
-    const side = aspect < 0.7 ? 18 : aspect < 1.15 ? 20 : 36
-    return { w, h, l: side, t: top, r: w - side, b: h - bottom }
+    const topEl = document.querySelector('#top')
+    const bar = document.querySelector('#actions')
+    const topBox = topEl?.getBoundingClientRect()
+    const barBox = bar?.getBoundingClientRect()
+    const top = Math.max(48, Math.round((topBox?.bottom ?? 58) + 4))
+    const bottom = barBox && barBox.top > top + 80 ? Math.round(barBox.top - 6) : h - 64
+    const side = Math.max(4, Math.round(w * 0.012))
+    return { w, h, l: side, t: top, r: w - side, b: Math.min(h - 8, bottom) }
   }
 
+  /** Corners of the path, the spawn lead-in, and the pet pen. Not the plinth. */
   private framePoints(): THREE.Vector3[] {
-    const pts: THREE.Vector3[] = []
-    const add = (x: number, y: number, z: number) => pts.push(new THREE.Vector3(x, y, z))
-    // The plinth is wider than the tiles. Fit its rim so the board edge stays on screen.
-    for (const x of [-0.95, 6.95]) {
-      for (const z of [-0.85, 10.95]) add(x, 0.2, z)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minZ = Infinity
+    let maxZ = -Infinity
+    const grow = (x: number, z: number, pad: number) => {
+      minX = Math.min(minX, x - pad)
+      maxX = Math.max(maxX, x + pad)
+      minZ = Math.min(minZ, z - pad)
+      maxZ = Math.max(maxZ, z + pad)
     }
-    for (const point of this.map.points) add(point.x, 0.9, point.z)
-    for (const pet of this.level.pets) add(pet.x, 0.45, pet.z)
+    for (const point of this.map.points) grow(point.x, point.z, 0.4)
+    for (const pet of this.level.pets) grow(pet.x, pet.z, 0.26)
+    const pts: THREE.Vector3[] = []
+    for (const x of [minX, maxX]) {
+      for (const z of [minZ, maxZ]) {
+        for (const y of [0.12, 0.85]) pts.push(new THREE.Vector3(x, y, z))
+      }
+    }
     return pts
   }
 
@@ -637,26 +661,29 @@ export class Game {
     }
     cx /= Math.max(1, this.map.points.length)
     cz /= Math.max(1, this.map.points.length)
-    let bestDist = 22
-    let bestX = THREE.MathUtils.clamp(cx, 1.2, 4.8)
-    let bestZ = THREE.MathUtils.clamp(cz, 2.2, 7.6)
-    let bestOver = Infinity
-    for (const ox of [-1.1, -0.45, 0, 0.45, 1.1]) {
-      for (const oz of [-1.4, -0.5, 0.3, 1.1]) {
-        const tx = THREE.MathUtils.clamp(cx + ox, 1.1, 4.9)
-        const tz = THREE.MathUtils.clamp(cz + oz, 1.8, 8.2)
-        let lo = 9
-        let hi = 46
-        for (let i = 0; i < 9; i++) {
+    const portrait = safe.w / Math.max(1, safe.h) < 0.85
+    let bestDist = 18
+    let bestX = cx
+    let bestZ = cz
+    let bestScore = Infinity
+    for (let ox = -1.6; ox <= 1.6; ox += 0.8) {
+      for (let oz = -1.6; oz <= 1.6; oz += 0.8) {
+        const tx = THREE.MathUtils.clamp(cx + ox, 0.45, 5.55)
+        const tz = THREE.MathUtils.clamp(cz + oz, 0.45, 9.2)
+        let lo = 7
+        let hi = 40
+        for (let i = 0; i < 11; i++) {
           const mid = (lo + hi) / 2
           const over = this.overflowAt(mid, tx, tz, pose, points, safe)
-          if (over <= 0.75) hi = mid
+          if (over <= 0.6) hi = mid
           else lo = mid
         }
-        const over = this.overflowAt(hi, tx, tz, pose, points, safe)
-        const tighter = over < bestOver - 0.5 || (Math.abs(over - bestOver) <= 0.5 && hi < bestDist)
-        if (tighter) {
-          bestOver = over
+        const span = this.spanAt(hi, tx, tz, pose, points, safe)
+        const widthShort = portrait ? Math.max(0, 0.9 - span.width) : 0
+        const heightShort = portrait ? 0 : Math.max(0, 0.78 - span.height)
+        const score = widthShort * 200 + heightShort * 80 + span.center * (portrait ? 4 : 14) + span.overflow * 30
+        if (score < bestScore) {
+          bestScore = score
           bestDist = hi
           bestX = tx
           bestZ = tz
@@ -664,6 +691,62 @@ export class Game {
       }
     }
     return { distance: bestDist, tx: bestX, tz: bestZ }
+  }
+
+  private spanAt(
+    distance: number,
+    tx: number,
+    tz: number,
+    pose: { fov: number; pitch: number; azimuth: number; lookY: number },
+    points: THREE.Vector3[],
+    safe: { w: number; h: number; l: number; t: number; r: number; b: number },
+  ): { width: number; height: number; center: number; overflow: number } {
+    const overflow = this.overflowAt(distance, tx, tz, pose, points, safe)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const point of points) {
+      _v.copy(point).project(this.camera)
+      const x = (_v.x * 0.5 + 0.5) * safe.w
+      const y = (-_v.y * 0.5 + 0.5) * safe.h
+      minX = Math.min(minX, x)
+      maxX = Math.max(maxX, x)
+      minY = Math.min(minY, y)
+      maxY = Math.max(maxY, y)
+    }
+    const safeMidY = (safe.t + safe.b) / 2
+    const center =
+      Math.abs((minX + maxX) / 2 - safe.w / 2) / safe.w + Math.abs((minY + maxY) / 2 - safeMidY) / safe.h
+    return {
+      width: (maxX - minX) / Math.max(1, safe.w),
+      height: (maxY - minY) / Math.max(1, safe.h),
+      center,
+      overflow,
+    }
+  }
+
+  private boardSpan(): { width: number; height: number } {
+    const w = this.app.clientWidth || window.innerWidth || 1
+    const h = this.app.clientHeight || window.innerHeight || 1
+    this.camera.updateMatrixWorld()
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const point of this.framePoints()) {
+      _v.copy(point).project(this.camera)
+      const x = (_v.x * 0.5 + 0.5) * w
+      const y = (-_v.y * 0.5 + 0.5) * h
+      minX = Math.min(minX, x)
+      maxX = Math.max(maxX, x)
+      minY = Math.min(minY, y)
+      maxY = Math.max(maxY, y)
+    }
+    return {
+      width: Math.round(((maxX - minX) / w) * 1000) / 1000,
+      height: Math.round(((maxY - minY) / h) * 1000) / 1000,
+    }
   }
 
   private applyFraming(resetView: boolean): void {
@@ -1276,6 +1359,13 @@ export class Game {
   private popEffective(enemy: Enemy): void {
     const last = this.effectiveAt.get(enemy.id) ?? -10
     if (this.time - last < 0.55) return
+    const near =
+      this.time - this.lastEffective < 1.2 &&
+      Math.hypot(enemy.pos.x - this.lastEffX, enemy.pos.z - this.lastEffZ) < 1.7
+    if (near) return
+    this.lastEffective = this.time
+    this.lastEffX = enemy.pos.x
+    this.lastEffZ = enemy.pos.z
     this.effectiveAt.set(enemy.id, this.time)
     this.popText(enemy.pos.x, enemy.pos.y + 1.15, enemy.pos.z, 'Effective!', '#b6ff8a', 1.2)
   }
@@ -1858,7 +1948,10 @@ export class Game {
   private coachAvoid(): Array<{ l: number; t: number; r: number; b: number }> {
     const boxes: Array<{ l: number; t: number; r: number; b: number } | null> = []
     boxes.push(this.clientBox(document.querySelector('#top')))
-    if (this.tutorStep === 2) boxes.push(this.clientBox(document.querySelector('#card-title')))
+    if (this.tutorStep === 2) {
+      boxes.push(this.clientBox(document.querySelector('#card')))
+      boxes.push(this.clientBox(document.querySelector('#actions')))
+    }
     if (this.tutorStep === 4) {
       const spawn = this.map.points[1] ?? this.map.points[0]
       boxes.push(this.worldBox(spawn.x, spawn.z, 1.2, 56))
@@ -2011,6 +2104,7 @@ export class Game {
     this.abductions = 0
     this.waveLog = []
     this.effectiveAt.clear()
+    this.lastEffective = -10
     this.bannerTitle = null
     this.bannerChips = null
     this.bannerT = 0
@@ -2077,7 +2171,9 @@ export class Game {
       (step === 4 && (reason === 'rescue' || reason === 'breather')) ||
       (step === 5 && (reason === 'early' || reason === 'wave'))
     if (!match) return
+    const leaving = this.tutorStep
     this.tutorStep += 1
+    if (leaving === 2) this.selected = null
     if (this.tutorStep > 5) {
       this.tutorStep = 0
       markTutorial()
@@ -2133,6 +2229,7 @@ export class Game {
         fps: Math.round(this.fps),
         draws: this.renderer.info.render.calls,
         zoom: Math.round(this.distance * 10) / 10,
+        board: this.boardSpan(),
         level: this.level.id,
         pads: this.level.pads.map((pad) => [pad[0], pad[1]]),
         hint: { x: this.map.hint.x, z: this.map.hint.z },

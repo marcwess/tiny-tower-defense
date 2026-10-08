@@ -21,6 +21,7 @@ interface TinyState {
   fps: number
   draws: number
   zoom: number
+  board: { width: number; height: number }
   level: number
   pads: number[][]
   hint: { x: number; z: number }

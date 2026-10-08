@@ -69,6 +69,7 @@ void game.init().catch((error: unknown) => {
       fps: 0,
       draws: 0,
       zoom: 0,
+      board: { width: 0, height: 0 },
       level: 1,
       pads: [],
       hint: { x: 0, z: 0 },

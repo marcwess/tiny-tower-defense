@@ -75,6 +75,7 @@ export class Fx {
       sizeAttenuation: true,
     })
     this.points = new THREE.Points(geo, mat)
+    this.parkPoints(this.positions, this.colors, MAX)
     this.points.frustumCulled = false
     scene.add(this.points)
 
@@ -91,6 +92,7 @@ export class Fx {
         sizeAttenuation: true,
       }),
     )
+    this.parkPoints(this.smokePos, this.smokeCol, 80)
     this.smoke.frustumCulled = false
     scene.add(this.smoke)
 
@@ -249,12 +251,8 @@ export class Fx {
     this.rings = []
     this.parts = []
     this.smokeParts = []
-    this.positions.fill(0)
-    this.colors.fill(0)
-    this.smokePos.fill(0)
-    this.smokeCol.fill(0)
-    for (let i = 0; i < MAX; i++) this.positions[i * 3 + 1] = -50
-    for (let i = 0; i < 80; i++) this.smokePos[i * 3 + 1] = -50
+    this.parkPoints(this.positions, this.colors, MAX)
+    this.parkPoints(this.smokePos, this.smokeCol, 80)
     const geo = this.points.geometry
     ;(geo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true
     ;(geo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true
@@ -343,12 +341,7 @@ export class Fx {
       col[o + 2] = p.b * fade
       n += 1
     }
-    for (let i = n; i < MAX; i++) {
-      pos[i * 3 + 1] = -50
-      col[i * 3] = 0
-      col[i * 3 + 1] = 0
-      col[i * 3 + 2] = 0
-    }
+    this.parkPoints(pos, col, MAX, n)
     const geo = this.points.geometry
     ;(geo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true
     ;(geo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true
@@ -394,6 +387,18 @@ export class Fx {
     }
   }
 
+  /** Unused points stay off the ground plane so they cannot speckle the foreground. */
+  private parkPoints(pos: Float32Array, col: Float32Array, max: number, from = 0): void {
+    for (let i = from; i < max; i++) {
+      pos[i * 3] = 0
+      pos[i * 3 + 1] = -800
+      pos[i * 3 + 2] = 0
+      col[i * 3] = 0
+      col[i * 3 + 1] = 0
+      col[i * 3 + 2] = 0
+    }
+  }
+
   private stepCloud(
     parts: Particle[],
     pos: Float32Array,
@@ -426,7 +431,7 @@ export class Fx {
       n += 1
       if (n >= max) break
     }
-    for (let i = n; i < max; i++) pos[i * 3 + 1] = -50
+    this.parkPoints(pos, col, max, n)
     const geo = points.geometry
     ;(geo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true
     ;(geo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true

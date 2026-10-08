@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -71,6 +71,60 @@ async function clipTray(page) {
   })
 }
 
+async function reportBoard(page, label, opts = {}) {
+  const board = await page.evaluate(() => {
+    const state = window.__TINY_TD__.getState()
+    return {
+      width: state.board.width,
+      height: state.board.height,
+      zoom: state.zoom,
+      level: state.level,
+      tier: state.tier,
+      w: window.innerWidth,
+      h: window.innerHeight,
+    }
+  })
+  console.log(`board ${label}`, JSON.stringify(board))
+  if (opts.minWidth != null && board.width < opts.minWidth) {
+    throw new Error(`${label} playable width ${board.width} is under ${opts.minWidth}`)
+  }
+  if (opts.minHeight != null && board.height < opts.minHeight) {
+    throw new Error(`${label} playable height ${board.height} is under ${opts.minHeight}`)
+  }
+  return board
+}
+
+async function assertCoach(page, label) {
+  const coach = await page.evaluate(() => {
+    const bubble = document.querySelector('#coach')
+    const card = document.querySelector('#card')
+    if (!(bubble instanceof HTMLElement) || bubble.hidden) return null
+    const box = bubble.getBoundingClientRect()
+    const panel = card instanceof HTMLElement && !card.hidden ? card.getBoundingClientRect() : null
+    return {
+      side: bubble.dataset.side ?? '',
+      top: box.top,
+      bottom: box.bottom,
+      left: box.left,
+      right: box.right,
+      cardTop: panel ? panel.top : null,
+      w: window.innerWidth,
+      h: window.innerHeight,
+    }
+  })
+  console.log('coach', label, JSON.stringify(coach))
+  if (!coach || coach.top < -1 || coach.left < -1 || coach.right > coach.w + 1 || coach.bottom > coach.h + 1) {
+    throw new Error(`${label} bubble is off screen: ${JSON.stringify(coach)}`)
+  }
+  if (label.includes('step 2')) {
+    if (coach.side !== 'down') throw new Error(`${label} should point down at the weapons: ${coach.side}`)
+    if (coach.cardTop != null && coach.bottom > coach.cardTop + 8) {
+      throw new Error(`${label} bubble covers the weapon row: ${JSON.stringify(coach)}`)
+    }
+  }
+  return coach
+}
+
 async function waitForServer() {
   for (let i = 0; i < 50; i++) {
     if (preview.exitCode !== null) {
@@ -122,6 +176,10 @@ try {
   const served = await page.content()
   if (!served.includes(bundle)) throw new Error(`preview is not serving ${bundle}`)
   await page.waitForFunction(() => window.__TINY_TD__?.ready && !window.__TINY_TD__.error)
+  await page.evaluate(() => window.__TINY_TD__.debugSettings())
+  await page.locator('[data-quality="high"]').click()
+  await page.locator('#sheet-close').click()
+  await delay(200)
 
   await page.evaluate(() => {
     const api = window.__TINY_TD__
@@ -147,14 +205,20 @@ try {
     }
   })
   console.log('portrait frame', JSON.stringify(portraitFrame))
-  const portraitZoom = await page.evaluate(() => window.__TINY_TD__.getState().zoom)
-  console.log('portrait zoom', portraitZoom)
+  const portraitBoard = await reportBoard(page, '390 level 1', { minWidth: 0.9 })
+  const portraitZoom = portraitBoard.zoom
+  const chrome = await page.evaluate(() => {
+    const top = document.querySelector('#top')?.getBoundingClientRect().bottom ?? 64
+    const bar = document.querySelector('#actions')?.getBoundingClientRect().top ?? window.innerHeight - 64
+    return { top, bar, w: window.innerWidth }
+  })
   for (const [name, point] of Object.entries(portraitFrame)) {
-    if (!point || point.x < 16 || point.x > 374 || point.y < 96 || point.y > 720) {
-      throw new Error(`portrait framing missed ${name}: ${JSON.stringify(point)}`)
+    if (!point || point.x < 2 || point.x > chrome.w - 2 || point.y < chrome.top - 2 || point.y > chrome.bar + 2) {
+      throw new Error(`portrait framing missed ${name}: ${JSON.stringify(point)} chrome ${JSON.stringify(chrome)}`)
     }
   }
   await page.screenshot({ path: `${OUT}/portrait_gameplay.png` })
+  await page.screenshot({ path: `${OUT}/level1_390.png` })
   const river = await page.evaluate(() => {
     const pts = []
     for (let x = 0.4; x <= 6.2; x += 0.35) {
@@ -491,11 +555,10 @@ try {
   await delay(300)
   const desktop = await stateOf(page)
   console.log('desktop zoom', desktop?.zoom, 'portrait zoom', portraitZoom)
-  if (!desktop || !(desktop.zoom < portraitZoom)) {
-    throw new Error(`desktop framing should be closer than portrait: ${desktop?.zoom} vs ${portraitZoom}`)
-  }
+  await reportBoard(page, 'desktop level 1', { minHeight: 0.72 })
   await page.screenshot({ path: `${OUT}/desktop_1280x800.png` })
   await page.screenshot({ path: `${OUT}/desktop_midwave.png` })
+  await page.screenshot({ path: `${OUT}/desktop_level1.png` })
 
   await page.setViewportSize({ width: 390, height: 844 })
   await page.evaluate(() => window.__TINY_TD__.debugTitle())
@@ -524,12 +587,16 @@ try {
   })
   await delay(250)
   await page.screenshot({ path: `${OUT}/tutorial_2.png` })
+  await page.screenshot({ path: `${OUT}/tut_390_step2.png` })
+  await assertCoach(page, '390 step 2')
   await page.evaluate(() => window.__TINY_TD__.debugCoach(3))
   await delay(200)
   await page.screenshot({ path: `${OUT}/tutorial_3.png` })
   await page.evaluate(() => window.__TINY_TD__.debugCoach(4))
   await delay(200)
   await page.screenshot({ path: `${OUT}/tutorial_4.png` })
+  await page.screenshot({ path: `${OUT}/tut_390_step4.png` })
+  await assertCoach(page, '390 step 4')
   await page.evaluate(() => window.__TINY_TD__.debugCoach(5))
   await delay(200)
   await page.screenshot({ path: `${OUT}/tutorial_5.png` })
@@ -549,6 +616,8 @@ try {
   await page.evaluate(() => window.__TINY_TD__.setTimeScale(0))
   await delay(200)
   await page.screenshot({ path: `${OUT}/level2_midwave.png` })
+  await page.screenshot({ path: `${OUT}/level2_390.png` })
+  await reportBoard(page, '390 level 2', { minWidth: 0.9 })
 
   await page.evaluate(() => window.__TINY_TD__.debugSettings())
   await page.locator('[data-quality="high"]').click()
@@ -568,6 +637,8 @@ try {
   await page.evaluate(() => window.__TINY_TD__.setTimeScale(0))
   await delay(200)
   await page.screenshot({ path: `${OUT}/level3_snow.png` })
+  await page.screenshot({ path: `${OUT}/level3_390.png` })
+  await reportBoard(page, '390 level 3', { minWidth: 0.9 })
 
   await page.evaluate(() => window.__TINY_TD__.debugSettings())
   await delay(200)
@@ -621,7 +692,37 @@ try {
     return top ? top.getBoundingClientRect().height : 0
   })
   if (hudRow > 56) throw new Error(`HUD wrapped at 320x568: ${hudRow}`)
+  await reportBoard(page, '320 level 1', { minWidth: 0.9 })
   await page.screenshot({ path: `${OUT}/gameplay_320x568.png` })
+  await page.screenshot({ path: `${OUT}/level1_320.png` })
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.retry()
+    api.setTimeScale(0)
+    const hint = api.getState().hint
+    api.buy(hint.x, hint.z, 'base')
+    api.debugCoach(2)
+  })
+  await delay(300)
+  await assertCoach(page, '320 step 2')
+  await page.screenshot({ path: `${OUT}/tut_320_step2.png` })
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    const hint = api.getState().hint
+    api.buy(hint.x, hint.z, 'turret')
+  })
+  await delay(200)
+  const closed = await page.evaluate(() => ({
+    card: document.querySelector('#card') instanceof HTMLElement ? document.querySelector('#card').hidden : true,
+    tutor: window.__TINY_TD__.getState().tutor,
+  }))
+  if (!closed.card || closed.tutor <= 2) {
+    throw new Error(`tutorial weapon buy should close the panel: ${JSON.stringify(closed)}`)
+  }
+  await page.evaluate(() => window.__TINY_TD__.debugCoach(4))
+  await delay(200)
+  await assertCoach(page, '320 step 4')
+  await page.screenshot({ path: `${OUT}/tut_320_step4.png` })
   await page.evaluate(() => window.__TINY_TD__.debugSettings())
   await delay(200)
   const settingsSmall = await page.evaluate(() => {
@@ -661,6 +762,10 @@ try {
     writeFileSync('public/icons/icon-512.png', buf)
     writeFileSync('public/icons/apple-touch-icon.png', buf)
     writeFileSync('/tmp/ttd-icon-512.png', buf)
+    execFileSync('python3', [
+      '-c',
+      'from PIL import Image; Image.open("public/icons/icon-512.png").resize((192,192), Image.Resampling.LANCZOS).save("public/icons/icon-192.png")',
+    ])
   }
 
   await browser.close()

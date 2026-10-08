@@ -151,7 +151,13 @@ function repairRiverUvs(mesh: THREE.Mesh, family: 'grass' | 'snow'): void {
       let u = pin ? pin.u : uv.getX(id)
       let v = pin ? pin.v : uv.getY(id)
       if (family === 'snow') {
-        if (smear || blank || u > 0.9) {
+        if (blank) {
+          u = WOOD_UV.u
+          v = WOOD_UV.v
+        } else if (smear) {
+          u = 0.094
+          v = 0.95
+        } else if (u > 0.9) {
           u = SNOW_BANK.u
           v = SNOW_BANK.v
         } else if (u >= 0.81 && u <= 0.88 && v >= 0.75) {
@@ -565,11 +571,16 @@ export function renderAppIcon(): string {
   pet.root.rotation.y = -0.6
   scene.add(pet.root)
 
-  const cam = new THREE.PerspectiveCamera(32, 1, 0.05, 30)
-  const box = new THREE.Box3().setFromObject(scene)
+  const box = new THREE.Box3().setFromObject(stack)
+  box.expandByObject(ufo)
+  box.expandByObject(pet.root)
   const center = box.getCenter(new THREE.Vector3())
-  cam.position.set(center.x + 2.4, center.y + 2.1, center.z + 3.6)
-  cam.lookAt(center.x, center.y + 0.15, center.z)
+  const extent = box.getSize(new THREE.Vector3())
+  const radius = Math.max(extent.x, extent.y, extent.z) * 0.5
+  const cam = new THREE.PerspectiveCamera(28, 1, 0.05, 40)
+  const dist = radius / Math.sin((28 * Math.PI) / 180 / 2) / 0.76
+  cam.position.set(center.x + dist * 0.42, center.y + dist * 0.32, center.z + dist * 0.74)
+  cam.lookAt(center.x, center.y, center.z)
   renderer.render(scene, cam)
   const url = renderer.domElement.toDataURL('image/png')
   renderer.forceContextLoss()

@@ -68,8 +68,8 @@ export function buildMap(level: LevelDef = levelById(1)): BuiltMap {
     const mesh = spawnModel(cell.model)
     mesh.position.set(cell.x, 0, cell.z)
     mesh.rotation.y = cell.rot * (Math.PI / 2)
-    if (cell.model.includes('river')) {
-      const water = makeWater(cell.model.includes('bridge'), waterMaps, level.biome === 'snow')
+    if (cell.model.includes('river') && level.biome !== 'snow') {
+      const water = makeWater(cell.model.includes('bridge'), waterMaps)
       water.userData.keep = true
       mesh.add(water)
     }
@@ -89,6 +89,10 @@ export function buildMap(level: LevelDef = levelById(1)): BuiltMap {
   }
 
   group.add(makeIsland(level.biome))
+  if (level.biome === 'snow') {
+    const bridge = level.path.find((tile) => tile.model.includes('bridge'))
+    group.add(makeIceRibbon(bridge?.x ?? 2, waterMaps))
+  }
   const clouds = makeClouds()
   for (const cloud of clouds) group.add(cloud)
 
@@ -220,30 +224,42 @@ function iceCanvas(): HTMLCanvasElement {
   canvas.height = 256
   const ctx = canvas.getContext('2d')
   if (!ctx) return canvas
-  const sheet = ctx.createLinearGradient(0, 0, 220, 256)
-  sheet.addColorStop(0, '#f7fcff')
-  sheet.addColorStop(0.4, '#d7f0fa')
-  sheet.addColorStop(1, '#c5e4f2')
+  const sheet = ctx.createLinearGradient(0, 0, 0, 256)
+  sheet.addColorStop(0, '#8fd4f2')
+  sheet.addColorStop(0.42, '#4eafd8')
+  sheet.addColorStop(1, '#2f8fbe')
   ctx.fillStyle = sheet
   ctx.fillRect(0, 0, 256, 256)
+  ctx.globalAlpha = 0.55
+  for (let i = 0; i < 7; i++) {
+    const y = 18 + i * 36
+    const glint = ctx.createLinearGradient(0, y - 8, 0, y + 10)
+    glint.addColorStop(0, 'rgba(255,255,255,0)')
+    glint.addColorStop(0.5, 'rgba(236, 250, 255, 0.95)')
+    glint.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = glint
+    ctx.fillRect(0, y - 8, 256, 16)
+  }
+  ctx.globalAlpha = 1
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
   const cracks = [
-    [18, 48, 70, 86, 96, 64, 148, 122, 190, 98],
-    [36, 210, 88, 168, 130, 188, 176, 150, 230, 176],
-    [168, 28, 198, 72, 176, 118, 214, 150],
-    [24, 128, 62, 146, 54, 188],
-    [120, 20, 108, 70, 150, 58],
+    [8, 40, 54, 78, 90, 52, 140, 110, 188, 84, 248, 120],
+    [12, 200, 70, 164, 118, 188, 170, 150, 230, 176, 250, 150],
+    [150, 16, 188, 64, 166, 112, 214, 148, 248, 132],
+    [20, 120, 58, 142, 48, 190, 96, 220],
+    [110, 8, 98, 70, 146, 48, 132, 96],
+    [40, 250, 88, 220, 150, 246],
   ]
   for (const line of cracks) {
     ctx.beginPath()
     ctx.moveTo(line[0], line[1])
     for (let i = 2; i < line.length; i += 2) ctx.lineTo(line[i], line[i + 1])
-    ctx.strokeStyle = 'rgba(78, 126, 154, 0.55)'
-    ctx.lineWidth = 2.4
+    ctx.strokeStyle = 'rgba(14, 58, 86, 0.85)'
+    ctx.lineWidth = 3
     ctx.stroke()
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'
-    ctx.lineWidth = 1
+    ctx.strokeStyle = 'rgba(232, 248, 255, 0.9)'
+    ctx.lineWidth = 1.2
     ctx.stroke()
   }
   return canvas
@@ -316,6 +332,38 @@ function makeIce(bridge: boolean, bucket: THREE.Texture[]): THREE.Group {
   sheet.position.y = bridge ? 0.2 : 0.25
   sheet.renderOrder = 2
   group.add(sheet)
+  return group
+}
+
+/** One continuous sheet per bank of the bridge, so tile edges do not cut the ice. */
+function makeIceRibbon(bridgeX: number, bucket: THREE.Texture[]): THREE.Group {
+  const group = new THREE.Group()
+  group.name = 'ice-ribbon'
+  group.userData.keep = true
+  const ice = iceTexture()
+  if (!bucket.includes(ice)) bucket.push(ice)
+  const material = new THREE.MeshBasicMaterial({
+    map: ice,
+    depthWrite: true,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+  })
+  const lay = (x0: number, x1: number, across: number, y: number) => {
+    const len = Math.max(0.2, x1 - x0)
+    const geo = new THREE.PlaneGeometry(len, across)
+    const uv = geo.getAttribute('uv')
+    for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * (len / 1.15))
+    const sheet = new THREE.Mesh(geo, material)
+    sheet.rotation.x = -Math.PI / 2
+    sheet.position.set((x0 + x1) / 2, y, 5)
+    sheet.renderOrder = 2
+    sheet.userData.keep = true
+    group.add(sheet)
+  }
+  const gap = 0.58
+  lay(-0.2, bridgeX - gap, 0.98, 0.36)
+  lay(bridgeX + gap, 6.2, 0.98, 0.36)
+  lay(bridgeX - 0.34, bridgeX + 0.34, 0.42, 0.08)
   return group
 }
 
