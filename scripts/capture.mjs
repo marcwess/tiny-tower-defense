@@ -231,19 +231,75 @@ try {
   const labelClip320 = await clipTray(page)
   if (labelClip320.width < 8) throw new Error(`shop labels missing at 320: ${JSON.stringify(boxes320)}`)
   await page.screenshot({ path: `${OUT}/shop_labels_320.png`, clip: labelClip320 })
-  await page.setViewportSize({ width: 390, height: 844 })
-
+  await page.setViewportSize({ width: 320, height: 780 })
   await page.evaluate(() => {
     window.__TINY_TD__.retry()
-    window.__TINY_TD__.cameraFocus(3, 1.1, 9.2)
-    window.__TINY_TD__.debugAbduct()
+    window.__TINY_TD__.debugPreview()
+    window.__TINY_TD__.deselect()
   })
-  await delay(680)
+  await delay(200)
+  const preview320 = await page.locator('#preview').innerText()
+  if (!preview320.toLowerCase().includes('weak to')) throw new Error(`preview missing weak-to at 320: ${preview320}`)
+  await page.screenshot({ path: `${OUT}/preview_320.png` })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await delay(200)
+  const preview = await page.locator('#preview').innerText()
+  if (!preview.toLowerCase().includes('weak to')) throw new Error(`preview missing weak-to: ${preview}`)
+  await page.screenshot({ path: `${OUT}/preview_weak.png` })
+
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.retry()
+    api.debugPop()
+    api.deselect()
+    api.setTimeScale(0)
+  })
+  await delay(250)
+  await page.screenshot({ path: `${OUT}/portrait_matchup.png` })
+
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.retry()
+    api.setTimeScale(1)
+    api.cameraFocus(3, 1.1, 9.2)
+    api.debugAbduct()
+  })
+  await delay(500)
+  await page.screenshot({ path: `${OUT}/pet_carry.png` })
   await page.screenshot({ path: `${OUT}/pet_abduction.png` })
+  await page.evaluate(() => window.__TINY_TD__.debugRescue())
+  await delay(700)
+  await page.screenshot({ path: `${OUT}/pet_rescue.png` })
+
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.retry()
+    api.setTimeScale(0)
+    api.setGold(400)
+    api.buy(2, 7, 'base')
+    api.buy(2, 7, 'turret')
+    api.buy(2, 7, 'upgrade')
+    api.cameraFocus(2, 7, 8)
+    api.select(2, 7)
+  })
+  await delay(300)
+  await page.screenshot({ path: `${OUT}/upgrade_ui.png` })
+
+  await page.evaluate(() => {
+    const api = window.__TINY_TD__
+    api.retry()
+    api.setTimeScale(0)
+    api.debugBoss()
+    api.deselect()
+  })
+  await delay(250)
+  await page.screenshot({ path: `${OUT}/boss_wave.png` })
 
   await page.evaluate(() => window.__TINY_TD__.debugWin())
   await delay(250)
   await page.screenshot({ path: `${OUT}/win_screen.png` })
+  await page.screenshot({ path: `${OUT}/win_stars.png` })
 
   await page.evaluate(() => {
     window.__TINY_TD__.retry()
@@ -266,16 +322,15 @@ try {
 
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.evaluate(() => {
-    window.__TINY_TD__.retry()
-    window.__TINY_TD__.buy(2, 7, 'base')
-    window.__TINY_TD__.buy(2, 7, 'turret')
-    window.__TINY_TD__.buy(3, 4, 'base')
-    window.__TINY_TD__.buy(3, 4, 'ballista')
-    window.__TINY_TD__.startWave()
-    window.__TINY_TD__.deselect()
+    const api = window.__TINY_TD__
+    api.retry()
+    api.debugPop()
+    api.deselect()
+    api.setTimeScale(0)
   })
-  await delay(900)
+  await delay(300)
   await page.screenshot({ path: `${OUT}/desktop_1280x800.png` })
+  await page.screenshot({ path: `${OUT}/desktop_midwave.png` })
 
   await browser.close()
   console.log('screenshots written to', OUT)

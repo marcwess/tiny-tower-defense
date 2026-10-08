@@ -14,6 +14,8 @@ type SfxName =
   | 'wave'
   | 'win'
   | 'lose'
+  | 'cheer'
+  | 'thud'
 
 const FILES: Record<SfxName | 'music', string> = {
   music: 'assets/audio/music-loops/Loops/Mission Plausible.ogg',
@@ -30,6 +32,8 @@ const FILES: Record<SfxName | 'music', string> = {
   wave: 'assets/audio/interface-sounds/Audio/confirmation_003.ogg',
   win: 'assets/audio/music-jingles/Audio (Retro)/jingles-retro_00.ogg',
   lose: 'assets/audio/music-jingles/Audio (Retro)/jingles-retro_02.ogg',
+  cheer: 'assets/audio/music-jingles/Audio (Retro)/jingles-retro_01.ogg',
+  thud: 'assets/audio/impact-sounds/Audio/impactGeneric_light_004.ogg',
 }
 
 const VOLUME: Record<SfxName, number> = {
@@ -46,6 +50,8 @@ const VOLUME: Record<SfxName, number> = {
   wave: 0.5,
   win: 0.6,
   lose: 0.6,
+  cheer: 0.55,
+  thud: 0.46,
 }
 
 const MUTE_KEY = 'tiny-td-muted'

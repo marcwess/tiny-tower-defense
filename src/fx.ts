@@ -17,7 +17,16 @@ interface Particle {
 interface Popup {
   sprite: THREE.Sprite
   life: number
+  max: number
   vy: number
+}
+
+interface Chunk {
+  mesh: THREE.Mesh
+  life: number
+  max: number
+  vy: number
+  spin: number
 }
 
 interface Ring {
@@ -38,6 +47,7 @@ export class Fx {
   private smokePos = new Float32Array(80 * 3)
   private smokeCol = new Float32Array(80 * 3)
   private popups: Popup[] = []
+  private chunks: Chunk[] = []
   private rings: Ring[] = []
   private ringGeo: THREE.RingGeometry
   private ringMat: THREE.MeshBasicMaterial
@@ -137,29 +147,70 @@ export class Fx {
     this.rings.push({ mesh, life: 0.35, max: 0.35 })
   }
 
-  popup(x: number, y: number, z: number, text: string, color: string): void {
+  popup(x: number, y: number, z: number, text: string, color: string, life = 0.9): void {
+    if (this.popups.length > 16) {
+      const old = this.popups.shift()
+      if (old) {
+        this.scene.remove(old.sprite)
+        const oldMat = old.sprite.material as THREE.SpriteMaterial
+        oldMat.map?.dispose()
+        oldMat.dispose()
+      }
+    }
     const canvas = document.createElement('canvas')
-    canvas.width = 256
-    canvas.height = 96
+    canvas.width = 512
+    canvas.height = 128
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    ctx.clearRect(0, 0, 256, 96)
-    ctx.font = '700 54px "Kenney Bold", "Kenney Future", sans-serif'
+    ctx.clearRect(0, 0, 512, 128)
+    ctx.font = '700 64px "Kenney Bold", "Kenney Future", sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.lineWidth = 8
+    ctx.lineWidth = 10
     ctx.strokeStyle = 'rgba(20, 24, 32, 0.85)'
-    ctx.strokeText(text, 128, 48)
+    ctx.strokeText(text, 256, 64)
     ctx.fillStyle = color
-    ctx.fillText(text, 128, 48)
+    ctx.fillText(text, 256, 64)
     const tex = new THREE.CanvasTexture(canvas)
     tex.colorSpace = THREE.SRGBColorSpace
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false })
     const sprite = new THREE.Sprite(mat)
     sprite.position.set(x, y, z)
-    sprite.scale.set(0.9, 0.34, 1)
+    const wide = Math.min(1.8, 0.42 + text.length * 0.11)
+    sprite.scale.set(wide, 0.42, 1)
     this.scene.add(sprite)
-    this.popups.push({ sprite, life: 0.8, vy: 0.7 })
+    this.popups.push({ sprite, life, max: life, vy: 0.65 })
+  }
+
+  /** A few solid bits when a UFO pops. Kept small so phones stay smooth. */
+  debris(x: number, y: number, z: number, color: number): void {
+    const tint = new THREE.Color(color)
+    for (let i = 0; i < 5; i++) {
+      if (this.chunks.length >= 24) {
+        const old = this.chunks.shift()
+        if (old) {
+          this.scene.remove(old.mesh)
+          old.mesh.geometry.dispose()
+          ;(old.mesh.material as THREE.Material).dispose()
+        }
+      }
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.08, 0.08, 0.08),
+        new THREE.MeshLambertMaterial({ color: tint }),
+      )
+      mesh.position.set(x, y, z)
+      this.scene.add(mesh)
+      const life = 0.35 + Math.random() * 0.2
+      this.chunks.push({
+        mesh,
+        life,
+        max: life,
+        vy: 1.2 + Math.random() * 1.6,
+        spin: (Math.random() - 0.5) * 8,
+      })
+      mesh.userData.vx = (Math.random() - 0.5) * 2.2
+      mesh.userData.vz = (Math.random() - 0.5) * 2.2
+    }
   }
 
   update(dt: number): void {
@@ -203,12 +254,29 @@ export class Fx {
       popup.life -= dt
       popup.sprite.position.y += popup.vy * dt
       const mat = popup.sprite.material as THREE.SpriteMaterial
-      mat.opacity = Math.max(0, popup.life / 0.8)
+      mat.opacity = Math.max(0, popup.life / popup.max)
       if (popup.life <= 0) {
         this.scene.remove(popup.sprite)
         mat.map?.dispose()
         mat.dispose()
         this.popups.splice(i, 1)
+      }
+    }
+
+    for (let i = this.chunks.length - 1; i >= 0; i--) {
+      const chunk = this.chunks[i]
+      chunk.life -= dt
+      chunk.vy -= dt * 6
+      chunk.mesh.position.x += (chunk.mesh.userData.vx as number) * dt
+      chunk.mesh.position.y += chunk.vy * dt
+      chunk.mesh.position.z += (chunk.mesh.userData.vz as number) * dt
+      chunk.mesh.rotation.x += chunk.spin * dt
+      chunk.mesh.rotation.z += chunk.spin * 0.6 * dt
+      if (chunk.life <= 0 || chunk.mesh.position.y < 0.02) {
+        this.scene.remove(chunk.mesh)
+        chunk.mesh.geometry.dispose()
+        ;(chunk.mesh.material as THREE.Material).dispose()
+        this.chunks.splice(i, 1)
       }
     }
 

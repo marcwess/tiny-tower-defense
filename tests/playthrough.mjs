@@ -105,7 +105,7 @@ try {
   await page.locator('[data-part="turret"]').click()
   const built = await stateOf(page)
   if (built.towers !== 1) throw new Error(`tower was not placed via tap: ${JSON.stringify(built)}`)
-  if (built.gold >= 150) throw new Error('gold did not drop')
+  if (built.gold >= ready.gold) throw new Error('gold did not drop')
 
   const beforeZoom = built.zoom
   await page.mouse.move(195, 420)
@@ -141,7 +141,7 @@ try {
   if (after.spawned < 6) throw new Error(`wave did not spawn: ${JSON.stringify(after)}`)
   if (after.kills < 1) throw new Error(`no kills: ${JSON.stringify(after)}`)
   if (after.phase === 'defeat') throw new Error(`lost wave 1: ${JSON.stringify(after)}`)
-  if (after.leaks > 0) throw new Error(`wave 1 leaked: ${JSON.stringify(after)}`)
+  if (after.leaks > 0) throw new Error(`wave 1 lost a pet: ${JSON.stringify(after)}`)
   console.log('wave 1', JSON.stringify(after))
 
   await page.setViewportSize({ width: 1280, height: 800 })
@@ -167,8 +167,50 @@ try {
     await delay(200)
   }
   console.log('one tower', JSON.stringify(underbuilt))
-  if (underbuilt?.phase !== 'defeat') {
-    throw new Error(`a single tower should lose: ${JSON.stringify(underbuilt)}`)
+  if (underbuilt?.phase !== 'defeat' || underbuilt.wave > 5) {
+    throw new Error(`a single tower should lose early: ${JSON.stringify(underbuilt)}`)
+  }
+
+  const spamSpots = [
+    [2, 7],
+    [3, 7],
+    [5, 7],
+    [3, 4],
+    [4, 2],
+  ]
+  await page.evaluate((spots) => {
+    const api = window.__TINY_TD__
+    api.retry()
+    api.setTimeScale(12)
+    for (const [x, z] of spots) {
+      api.buy(x, z, 'base')
+      api.buy(x, z, 'turret')
+      api.buy(x, z, 'middle-a')
+    }
+    api.startWave()
+  }, spamSpots)
+  const spamStart = Date.now()
+  let spam = null
+  while (Date.now() - spamStart < 180000) {
+    spam = await stateOf(page)
+    if (spam?.phase === 'victory' || spam?.phase === 'defeat') break
+    if (spam?.phase === 'breather' || spam?.phase === 'ready') await page.evaluate(() => window.__TINY_TD__.startWave())
+    await delay(200)
+  }
+  console.log('turret spam', JSON.stringify({ ...spam, log: undefined }))
+  if (spam?.log?.length) {
+    console.log('spam balance')
+    for (const row of spam.log) {
+      console.log(
+        `${row.wave} | ${row.gold} | ${row.kills} | ${row.leaks} | ${row.pets} | ${row.rescues} | ${row.abductions}`,
+      )
+    }
+  }
+  if (!spam || (spam.phase !== 'victory' && spam.phase !== 'defeat')) {
+    throw new Error(`turret spam did not finish: ${JSON.stringify(spam)}`)
+  }
+  if (spam.phase === 'victory' && spam.pets >= 5 && spam.leaks === 0) {
+    throw new Error(`turret spam should lose pets or the run: ${JSON.stringify(spam)}`)
   }
 
   await page.evaluate(() => {
@@ -207,6 +249,16 @@ try {
     [4, 2, 'middle-a'],
     [4, 2, 'middle-b'],
     [5, 7, 'middle-b'],
+    [2, 7, 'upgrade'],
+    [3, 7, 'upgrade'],
+    [5, 7, 'upgrade'],
+    [3, 4, 'upgrade'],
+    [4, 2, 'upgrade'],
+    [3, 7, 'upgrade'],
+    [3, 4, 'upgrade'],
+    [2, 7, 'upgrade'],
+    [5, 7, 'upgrade'],
+    [4, 2, 'upgrade'],
   ]
   const buyNext = () =>
     page.evaluate((steps) => {
@@ -221,7 +273,7 @@ try {
 
   const started = Date.now()
   let finalState = null
-  while (Date.now() - started < 120000) {
+  while (Date.now() - started < 180000) {
     let bought = false
     for (let n = 0; n < 8; n++) {
       const before = await page.evaluate(() => window.__planCursor ?? 0)
@@ -232,18 +284,43 @@ try {
     finalState = await stateOf(page)
     if (finalState?.error) throw new Error(finalState.error)
     if (finalState?.phase === 'victory' || finalState?.phase === 'defeat') break
+    const cursor = await page.evaluate(() => window.__planCursor ?? 0)
+    if (cursor >= plan.length) {
+      await page.evaluate(() => {
+        const spots = [
+          [2, 7],
+          [3, 7],
+          [5, 7],
+          [3, 4],
+          [4, 2],
+        ]
+        for (const [x, z] of spots) window.__TINY_TD__.buy(x, z, 'upgrade')
+      })
+    }
     if (!bought && (finalState?.phase === 'ready' || finalState?.phase === 'breather')) {
       await page.evaluate(() => window.__TINY_TD__.startWave())
     }
     await delay(200)
   }
   console.log('full game', JSON.stringify(finalState))
+  if (finalState?.log) {
+    console.log('balance')
+    console.log('wave | gold | kills | leaks | pets | rescues | abductions | came')
+    for (const row of finalState.log) {
+      console.log(
+        `${row.wave} | ${row.gold} | ${row.kills} | ${row.leaks} | ${row.pets} | ${row.rescues} | ${row.abductions} | ${row.came}`,
+      )
+    }
+  }
   if (!finalState || (finalState.phase !== 'victory' && finalState.phase !== 'defeat')) {
     throw new Error(`full game did not finish: ${JSON.stringify(finalState)}`)
   }
   if (finalState.phase !== 'victory') {
-    throw new Error(`scripted defense lost: ${JSON.stringify(finalState)}`)
+    throw new Error(`mixed defense lost: ${JSON.stringify(finalState)}`)
   }
+  if (finalState.abductions < 1) throw new Error(`mixed defense was never pressured: ${JSON.stringify(finalState)}`)
+  if (finalState.rescues < 1) throw new Error(`mixed defense never rescued a pet: ${JSON.stringify(finalState)}`)
+  if (finalState.gold > 150) throw new Error(`mixed defense hoarded gold: ${JSON.stringify(finalState)}`)
 
   await browser.close()
   if (errors.length) throw new Error(errors.join('\n'))

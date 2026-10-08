@@ -1,22 +1,28 @@
 import * as THREE from 'three'
-import { arrowTexture, loadAssets, renderPieceThumbnails, spawnModel } from './assets'
+import { arrowTexture, asset, loadAssets, renderPieceThumbnails, spawnModel } from './assets'
 import { audio } from './audio'
 import {
   BASE_COST,
   BASE_RANGE,
   BREATHER_SECONDS,
-  CLEAR_BONUS,
-  EARLY_BONUS,
   ENEMIES,
   MAX_MIDDLES,
   MAX_TOWERS,
+  MAX_UPGRADE,
   MIDDLES,
   PET_COUNT,
   ROOFS,
   SELL_RATIO,
   START_GOLD,
+  UPGRADE_COST,
   WAVES,
   WEAPONS,
+  clearBonus,
+  earlyBonus,
+  matchup,
+  stackCost,
+  starCount,
+  wavePreview,
   type EnemyKind,
   type MiddleId,
   type RoofId,
@@ -41,7 +47,9 @@ interface Projectile {
   slow: number
   shieldMul: number
   pierce: number
-  vsBrute: number
+  weapon: WeaponId | null
+  roof: RoofId | null
+  splashHit: boolean
   homing: boolean
   speed: number
   target: Enemy | null
@@ -49,14 +57,27 @@ interface Projectile {
   alive: boolean
 }
 
-interface Abduction {
+interface Carry {
   enemy: Enemy
   pet: Pet
+  phase: 'beam' | 'flee'
   time: number
   beam: THREE.Object3D
   burst: THREE.Object3D
   glow: THREE.Mesh
+  icon: THREE.Sprite
   spark: number
+}
+
+interface WaveRow {
+  wave: number
+  gold: number
+  kills: number
+  leaks: number
+  pets: number
+  rescues: number
+  abductions: number
+  came: string
 }
 
 type Phase = 'ready' | 'wave' | 'breather' | 'victory' | 'defeat'
@@ -165,8 +186,16 @@ export class Game {
   private enemies: Enemy[] = []
   private pets: Pet[] = []
   private projectiles: Projectile[] = []
-  private abduction: Abduction | null = null
-  private queue: Enemy[] = []
+  private carries: Carry[] = []
+  private heartMap: THREE.Texture | null = null
+  private rescues = 0
+  private abductions = 0
+  private waveLog: WaveRow[] = []
+  private showDamage = true
+  private bannerTitle: string | null = null
+  private bannerBody: string | null = null
+  private bannerT = 0
+  private effectiveAt = new Map<number, number>()
   private highlight: THREE.Mesh
   private rangeMesh: THREE.Mesh
   private hintMarker: THREE.Sprite
@@ -176,7 +205,7 @@ export class Game {
   private waveIndex = 0
   private countdown = 0
   private waveTime = 0
-  private schedule: { time: number; kind: EnemyKind }[] = []
+  private schedule: { time: number; kind: EnemyKind; entry: number; hpMul: number }[] = []
   private spawnIndex = 0
   private kills = 0
   private leaks = 0
@@ -229,6 +258,7 @@ export class Game {
     this.camera = new THREE.PerspectiveCamera(52, 1, 0.12, 90)
     this.app.prepend(this.renderer.domElement)
     this.hint = localStorage.getItem('tiny-td-hint-v1') !== '1'
+    this.showDamage = localStorage.getItem('tiny-td-dmg') !== '0'
 
     this.scene.background = skyTexture()
     this.scene.fog = new THREE.Fog(0xf6e2c8, 42, 82)
@@ -529,6 +559,13 @@ export class Game {
   private tick(dt: number): void {
     this.time += dt
     this.shake = Math.max(0, this.shake - dt * 1.4)
+    if (this.bannerT > 0) {
+      this.bannerT = Math.max(0, this.bannerT - dt)
+      if (this.bannerT === 0) {
+        this.bannerTitle = null
+        this.bannerBody = null
+      }
+    }
     const playing = this.phase === 'ready' || this.phase === 'wave' || this.phase === 'breather'
     if (this.phase === 'wave') this.updateSpawns(dt)
     if (this.phase === 'breather') {
@@ -537,17 +574,21 @@ export class Game {
     }
     if (playing) {
       const arrived: Enemy[] = []
+      const escaped: Enemy[] = []
       for (const enemy of this.enemies) {
-        if (enemy.update(dt, this.map.points, this.time)) arrived.push(enemy)
+        const step = enemy.update(dt, this.map.points, this.time)
+        if (step === 'arrived') arrived.push(enemy)
+        if (step === 'escaped') escaped.push(enemy)
       }
       for (const enemy of arrived) this.onArrive(enemy)
+      for (const enemy of escaped) this.onEscape(enemy)
       this.updateTowers(dt)
       this.updateProjectiles(dt)
       this.flushKills()
-      this.updateAbduction(dt)
+      this.updateCarries(dt)
       this.checkWaveClear()
     } else {
-      this.updateAbduction(dt)
+      this.updateCarries(dt)
     }
     const threat = this.enemies.some((enemy) => enemy.alive && enemy.pos.z < 2.6)
     for (const pet of this.pets) {
@@ -566,18 +607,21 @@ export class Game {
     if (this.livingPets() <= 0) return
     this.waveTime += dt
     while (this.spawnIndex < this.schedule.length && this.schedule[this.spawnIndex].time <= this.waveTime) {
-      this.spawnEnemy(this.schedule[this.spawnIndex].kind)
+      const slot = this.schedule[this.spawnIndex]
+      this.spawnEnemy(slot.kind, slot.hpMul, slot.entry)
       this.spawnIndex += 1
       this.spawned += 1
     }
   }
 
-  private spawnEnemy(kind: EnemyKind): Enemy {
-    const scale = 1 + this.waveIndex * 0.22
-    const enemy = new Enemy(kind, scale)
-    enemy.reward = Math.round(enemy.reward * (1 + this.waveIndex * 0.06))
-    const start = this.map.points[0]
-    enemy.pos.set(start.x, ENEMIES[kind].hover, start.z)
+  private spawnEnemy(kind: EnemyKind, hpMul = 1, entry = 0): Enemy {
+    const enemy = new Enemy(kind, hpMul)
+    const points = this.map.points
+    const max = Math.max(1, points.length - 1)
+    const index = Math.min(max - 1, Math.floor(Math.max(0, entry) * max))
+    enemy.waypoint = index
+    const spot = points[index]
+    enemy.pos.set(spot.x, ENEMIES[kind].hover, spot.z)
     enemy.group.position.copy(enemy.pos)
     this.enemies.push(enemy)
     this.scene.add(enemy.group)
@@ -585,26 +629,45 @@ export class Game {
   }
 
   private onArrive(enemy: Enemy): void {
-    if (!enemy.alive || enemy.abducting) return
-    this.leaks += 1
-    if (this.livingPets() <= 0) {
-      this.removeEnemy(enemy)
-      this.lose()
-      return
-    }
+    if (!enemy.alive || enemy.abducting || enemy.fleeing) return
     const pet = this.pets.find((candidate) => candidate.alive && !candidate.reserved)
-    if (!pet || this.abduction) {
-      enemy.abducting = true
-      this.queue.push(enemy)
+    if (!pet) {
+      enemy.fleeing = true
+      enemy.fleeSpeed = 0.7
       return
     }
-    this.beginAbduction(enemy, pet)
+    this.beginCarry(enemy, pet)
   }
 
-  private beginAbduction(enemy: Enemy, pet: Pet): void {
+  private onEscape(enemy: Enemy): void {
+    const carry = this.carries.find((item) => item.enemy === enemy)
+    if (carry) {
+      carry.pet.alive = false
+      carry.pet.reserved = false
+      carry.pet.group.rotation.z = 0
+      this.scene.remove(carry.pet.group)
+      this.leaks += 1
+      this.dropCarry(carry)
+      this.fx.popup(enemy.pos.x, enemy.pos.y + 0.4, enemy.pos.z, 'Lost!', '#ffb0a8', 1.1)
+    }
+    this.removeEnemy(enemy)
+    if (this.livingPets() <= 0) this.lose()
+  }
+
+  private heartTexture(): THREE.Texture {
+    if (!this.heartMap) {
+      this.heartMap = new THREE.TextureLoader().load(asset('assets/icons/heart.png'))
+      this.heartMap.colorSpace = THREE.SRGBColorSpace
+    }
+    return this.heartMap
+  }
+
+  private beginCarry(enemy: Enemy, pet: Pet): void {
     pet.reserved = true
+    pet.ride()
     pet.play('gesture-negative')
     enemy.abducting = true
+    enemy.carrying = true
     const beam = spawnModel('enemy-ufo-beam')
     const burst = spawnModel('enemy-ufo-beam-burst')
     styleBeam(beam)
@@ -620,97 +683,96 @@ export class Game {
       }),
     )
     glow.renderOrder = 4
+    const icon = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: this.heartTexture(), transparent: true, depthWrite: false }),
+    )
+    icon.scale.set(0.46, 0.46, 1)
+    icon.position.y = ENEMIES[enemy.kind].scale * 1.35 + 0.35
+    enemy.group.add(icon)
     this.scene.add(beam)
     this.scene.add(burst)
     this.scene.add(glow)
-    this.abduction = { enemy, pet, time: 0, beam, burst, glow, spark: 0 }
+    this.carries.push({ enemy, pet, phase: 'beam', time: 0, beam, burst, glow, icon, spark: 0 })
+    this.abductions += 1
     audio.play('beam')
     this.shake = Math.max(this.shake, 0.14)
   }
 
-  private updateAbduction(dt: number): void {
-    const abduction = this.abduction
-    if (!abduction) return
-    if (!abduction.enemy.alive) {
-      this.cancelAbduction(true)
-      return
-    }
-    abduction.time += dt
-    const home = abduction.pet.home
-    const enemy = abduction.enemy
-    enemy.pos.x += (home.x - enemy.pos.x) * Math.min(1, dt * 3.2)
-    enemy.pos.z += (home.z - enemy.pos.z) * Math.min(1, dt * 3.2)
-    const hover = enemy.flying ? 2.35 : 2.05
-    if (abduction.time < 1.15) enemy.pos.y = hover
-    else enemy.pos.y += dt * 2.4
-    enemy.group.position.set(enemy.pos.x, enemy.pos.y + Math.sin(this.time * 6) * 0.03, enemy.pos.z)
-
-    const lift = Math.min(1, abduction.time / 0.85)
-    const petY = (enemy.pos.y - 0.15) * Math.pow(lift, 1.15)
-    abduction.pet.group.position.set(home.x, petY, home.z)
-    abduction.pet.group.rotation.y += dt * 2.2
-    const height = Math.max(0.25, enemy.pos.y - petY)
-    abduction.beam.position.set(home.x, petY, home.z)
-    abduction.beam.scale.set(0.22, height, 0.22)
-    abduction.burst.position.set(home.x, petY + 0.02, home.z)
-    abduction.burst.rotation.y += dt * 5
-    abduction.burst.scale.setScalar(0.42 + Math.sin(abduction.time * 24) * 0.04)
-    abduction.glow.position.set(home.x, petY + height * 0.5, home.z)
-    abduction.glow.scale.set(1, height, 1)
-    abduction.glow.rotation.y += dt * 2.4
-    abduction.pet.group.rotation.z = Math.sin(abduction.time * 16) * 0.18
-    if (abduction.time - abduction.spark > 0.1) {
-      abduction.spark = abduction.time
-      this.fx.burst(home.x, petY + Math.random() * height, home.z, 0xe7fbff, 2, 0.8)
-    }
-
-    if (abduction.time >= 1.7) this.finishAbduction()
-  }
-
-  private finishAbduction(): void {
-    const abduction = this.abduction
-    if (!abduction) return
-    abduction.pet.alive = false
-    abduction.pet.reserved = false
-    this.scene.remove(abduction.pet.group)
-    this.scene.remove(abduction.beam)
-    this.scene.remove(abduction.burst)
-    this.scene.remove(abduction.glow)
-    abduction.pet.group.rotation.z = 0
-    this.removeEnemy(abduction.enemy)
-    this.abduction = null
-    if (this.livingPets() <= 0) {
-      this.clearQueue()
-      this.lose()
-      return
-    }
-    const next = this.queue.shift()
-    if (next && next.alive) {
-      const pet = this.pets.find((candidate) => candidate.alive && !candidate.reserved)
-      if (pet) this.beginAbduction(next, pet)
-      else this.removeEnemy(next)
+  private updateCarries(dt: number): void {
+    for (const carry of [...this.carries]) {
+      if (!carry.enemy.alive) {
+        this.rescue(carry)
+        continue
+      }
+      const enemy = carry.enemy
+      const pet = carry.pet
+      if (carry.phase === 'beam') {
+        carry.time += dt
+        const home = pet.home
+        enemy.pos.x += (home.x - enemy.pos.x) * Math.min(1, dt * 3.4)
+        enemy.pos.z += (home.z - enemy.pos.z) * Math.min(1, dt * 3.4)
+        const hover = enemy.flying ? 2.15 : 1.85
+        enemy.pos.y += (hover - enemy.pos.y) * Math.min(1, dt * 3)
+        enemy.group.position.set(enemy.pos.x, enemy.pos.y + Math.sin(this.time * 6) * 0.03, enemy.pos.z)
+        const lift = Math.min(1, carry.time / 0.7)
+        const petY = Math.max(0, (enemy.pos.y - 0.55) * lift)
+        pet.group.position.set(home.x + (enemy.pos.x - home.x) * lift, petY, home.z + (enemy.pos.z - home.z) * lift)
+        pet.group.rotation.y += dt * 2.4
+        pet.group.rotation.z = Math.sin(carry.time * 14) * 0.16
+        this.placeBeam(carry, pet.group.position.x, petY, pet.group.position.z, enemy.pos.y)
+        if (carry.time >= 0.82) {
+          carry.phase = 'flee'
+          enemy.abducting = false
+          enemy.fleeing = true
+          enemy.fleeSpeed = 0.46
+          pet.group.rotation.z = 0
+        }
+      } else {
+        const petY = Math.max(0.15, enemy.pos.y - 0.55)
+        pet.group.position.set(enemy.pos.x, petY, enemy.pos.z)
+        pet.group.rotation.y += dt * 2.6
+        this.placeBeam(carry, enemy.pos.x, petY, enemy.pos.z, enemy.pos.y)
+      }
     }
   }
 
-  private cancelAbduction(saved: boolean): void {
-    const abduction = this.abduction
-    if (!abduction) return
-    this.scene.remove(abduction.beam)
-    this.scene.remove(abduction.burst)
-    this.scene.remove(abduction.glow)
-    abduction.pet.group.rotation.z = 0
-    if (saved) abduction.pet.dropHome()
-    this.abduction = null
-    const next = this.queue.shift()
-    if (next?.alive) {
-      const pet = this.pets.find((candidate) => candidate.alive && !candidate.reserved)
-      if (pet) this.beginAbduction(next, pet)
+  private placeBeam(carry: Carry, x: number, petY: number, z: number, ufoY: number): void {
+    const height = Math.max(0.25, ufoY - petY)
+    carry.beam.position.set(x, petY, z)
+    carry.beam.scale.set(0.22, height, 0.22)
+    carry.burst.position.set(x, petY + 0.02, z)
+    carry.burst.rotation.y += 0.08
+    carry.burst.scale.setScalar(0.42)
+    carry.glow.position.set(x, petY + height * 0.5, z)
+    carry.glow.scale.set(1, height, 1)
+    if (this.time - carry.spark > 0.12) {
+      carry.spark = this.time
+      this.fx.burst(x, petY + Math.random() * height, z, 0xe7fbff, 2, 0.8)
     }
   }
 
-  private clearQueue(): void {
-    for (const enemy of this.queue) this.removeEnemy(enemy)
-    this.queue.length = 0
+  private dropCarry(carry: Carry): void {
+    this.scene.remove(carry.beam)
+    this.scene.remove(carry.burst)
+    this.scene.remove(carry.glow)
+    carry.enemy.group.remove(carry.icon)
+    ;(carry.icon.material as THREE.Material).dispose()
+    carry.pet.group.rotation.z = 0
+    this.carries = this.carries.filter((item) => item !== carry)
+  }
+
+  private rescue(carry: Carry): void {
+    if (!this.carries.includes(carry)) return
+    const pet = carry.pet
+    const enemy = carry.enemy
+    this.dropCarry(carry)
+    if (!pet.alive) return
+    this.rescues += 1
+    pet.parachute(enemy.pos.x, Math.max(0.8, enemy.pos.y - 0.4), enemy.pos.z)
+    audio.play('cheer')
+    this.fx.popup(enemy.pos.x, enemy.pos.y + 0.55, enemy.pos.z, 'Saved!', '#b8ffb0', 1.15)
+    this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xd8ffe4, 10, 2.2)
+    this.shake = Math.max(this.shake, 0.08)
   }
 
   private updateTowers(dt: number): void {
@@ -734,7 +796,10 @@ export class Game {
       if (!enemy.alive) continue
       const dist = Math.hypot(enemy.pos.x - tower.x, enemy.pos.z - tower.z)
       if (dist > range + enemy.radius) continue
-      const progress = enemy.progress()
+      let progress = enemy.progress()
+      if (enemy.carrying || enemy.fleeing || enemy.abducting) progress += 500
+      else if (enemy.kind === 'boss') progress += 12
+      else if (enemy.kind === 'tank') progress += 5
       if (progress > bestProgress) {
         best = enemy
         bestProgress = progress
@@ -782,7 +847,9 @@ export class Game {
       slow: stats.slow,
       shieldMul: stats.shieldMul,
       pierce: stats.pierce,
-      vsBrute: stats.vsBrute,
+      weapon: stats.weapon,
+      roof: stats.roof,
+      splashHit: false,
       homing: !stats.arc,
       speed: stats.speed,
       target,
@@ -821,7 +888,7 @@ export class Game {
         if (segmentDistance(prevX, prevY, prevZ, proj.pos.x, proj.pos.y, proj.pos.z, enemy.pos.x, enemy.pos.y, enemy.pos.z) > reach) {
           continue
         }
-        this.strike(proj, enemy)
+        this.strike(proj, enemy, false)
         if (proj.splash > 0.05) {
           this.splash(proj, enemy.pos)
           proj.alive = false
@@ -847,30 +914,57 @@ export class Game {
     }
   }
 
-  private strike(proj: Projectile, enemy: Enemy): void {
-    const amount = enemy.kind === 'brute' ? proj.damage * proj.vsBrute : proj.damage
-    const killed = enemy.damage(amount, proj.shieldMul)
+  private strike(proj: Projectile, enemy: Enemy, fromSplash: boolean): void {
+    const dealt = this.applyHit(proj, enemy, fromSplash ? 0.65 : 1)
     if (proj.slow > 0) enemy.slow(Math.max(0.35, 1 - proj.slow), 1.45)
     proj.hit.add(enemy.id)
     proj.pierce -= 1
     proj.damage *= 0.72
     audio.play('hit')
-    this.fx.burst(enemy.pos.x, enemy.pos.y + 0.1, enemy.pos.z, 0xfff0b0, 7, 2.4)
-    if (killed) this.pending.push(enemy)
+    this.fx.burst(enemy.pos.x, enemy.pos.y + 0.1, enemy.pos.z, 0xfff0b0, 6, 2.2)
+    if (dealt.killed) this.pending.push(enemy)
+  }
+
+  private applyHit(
+    proj: Projectile,
+    enemy: Enemy,
+    scale: number,
+  ): { killed: boolean; effective: boolean } {
+    const mod = matchup(enemy.kind, { weapon: proj.weapon, roof: proj.roof, splash: proj.splashHit ? proj.splash : proj.splash })
+    const shieldMul = mod.shield >= 1 ? proj.shieldMul * mod.shield : mod.shield
+    const amount = proj.damage * mod.damage * scale
+    const hadShield = enemy.shield > 0
+    const killed = enemy.damage(amount, shieldMul)
+    const effective = mod.effective || (hadShield && mod.shield >= 1.8)
+    if (effective) this.popEffective(enemy)
+    if (this.showDamage && amount >= 1) {
+      this.fx.popup(enemy.pos.x + 0.15, enemy.pos.y + 0.45, enemy.pos.z, String(Math.round(amount)), '#fff6ea', 0.7)
+    }
+    return { killed, effective }
+  }
+
+  private popEffective(enemy: Enemy): void {
+    const last = this.effectiveAt.get(enemy.id) ?? -10
+    if (this.time - last < 0.55) return
+    this.effectiveAt.set(enemy.id, this.time)
+    this.fx.popup(enemy.pos.x, enemy.pos.y + 0.85, enemy.pos.z, 'Effective!', '#b6ff8a', 1.15)
   }
 
   private splash(proj: Projectile, origin: THREE.Vector3): void {
+    proj.splashHit = true
     for (const enemy of [...this.enemies]) {
       if (!enemy.alive || proj.hit.has(enemy.id)) continue
       const dist = Math.hypot(enemy.pos.x - origin.x, enemy.pos.z - origin.z)
       const radius = proj.splash + enemy.radius * 0.4
       if (dist > radius) continue
-      const falloff = 1 - dist / radius
-      const splashDamage = (enemy.kind === 'brute' ? proj.damage * proj.vsBrute : proj.damage) * (0.5 + 0.5 * falloff)
-      const killed = enemy.damage(splashDamage, proj.shieldMul)
+      const falloff = 0.55 + 0.45 * (1 - dist / radius)
+      const before = proj.damage
+      proj.damage *= falloff
+      const dealt = this.applyHit(proj, enemy, 1)
+      proj.damage = before
       if (proj.slow > 0) enemy.slow(Math.max(0.4, 1 - proj.slow * 0.8), 1.2)
       proj.hit.add(enemy.id)
-      if (killed) this.pending.push(enemy)
+      if (dealt.killed) this.pending.push(enemy)
     }
     this.fx.ring(origin.x, origin.z, 0xffb15a)
     this.fx.burst(origin.x, origin.y, origin.z, 0xffe08a, 10, 3.2)
@@ -901,14 +995,15 @@ export class Game {
     this.kills += 1
     this.gold += enemy.reward
     this.fx.popup(enemy.pos.x, enemy.pos.y + 0.35, enemy.pos.z, `+${enemy.reward}`, '#ffe08a')
-    this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xfff2c4, 14, 3.4)
+    this.fx.burst(enemy.pos.x, enemy.pos.y, enemy.pos.z, 0xfff2c4, 12, 3.2)
+    this.fx.debris(enemy.pos.x, enemy.pos.y + 0.2, enemy.pos.z, ENEMIES[enemy.kind].tint)
     this.fx.puff(enemy.pos.x, enemy.pos.y + 0.15, enemy.pos.z)
     this.fx.ring(enemy.pos.x, enemy.pos.z, 0xffd27a)
     this.flyCoins(enemy.pos, 3)
     audio.play('boom')
-    this.shake = Math.max(this.shake, 0.06)
-    if (this.abduction?.enemy === enemy) this.cancelAbduction(true)
-    this.queue = this.queue.filter((queued) => queued !== enemy)
+    this.shake = Math.max(this.shake, enemy.kind === 'boss' ? 0.2 : 0.12)
+    const carry = this.carries.find((item) => item.enemy === enemy)
+    if (carry) this.rescue(carry)
     this.removeEnemy(enemy)
   }
 
@@ -922,14 +1017,15 @@ export class Game {
   private checkWaveClear(): void {
     if (this.phase !== 'wave') return
     if (this.spawnIndex < this.schedule.length) return
-    if (this.enemies.length > 0 || this.abduction || this.queue.length > 0) return
+    if (this.enemies.length > 0 || this.carries.length > 0) return
     if (this.livingPets() <= 0) {
       this.lose()
       return
     }
     const cleared = this.waveIndex + 1
+    this.gold += clearBonus(cleared)
+    this.noteWave(cleared)
     this.waveIndex += 1
-    this.gold += CLEAR_BONUS + cleared * 2
     if (this.waveIndex >= WAVES.length) {
       this.win()
       return
@@ -943,9 +1039,28 @@ export class Game {
     return this.pets.filter((pet) => pet.alive).length
   }
 
+  private noteWave(waveNumber: number): void {
+    if (this.waveLog.some((row) => row.wave === waveNumber)) return
+    const def = WAVES[waveNumber - 1]
+    this.waveLog.push({
+      wave: waveNumber,
+      gold: this.gold,
+      kills: this.kills,
+      leaks: this.leaks,
+      pets: this.livingPets(),
+      rescues: this.rescues,
+      abductions: this.abductions,
+      came: def ? wavePreview(def).replaceAll('\n', ' | ') : '',
+    })
+  }
+
   startWave(bonus: boolean): void {
     if (this.phase !== 'ready' && this.phase !== 'breather') return
-    if (bonus && this.phase === 'breather' && this.countdown > 0.75) this.gold += EARLY_BONUS
+    if (bonus && this.phase === 'breather' && this.countdown > 0.75) this.gold += earlyBonus(this.waveIndex)
+    const preview = wavePreview(WAVES[this.waveIndex])
+    this.bannerTitle = this.waveIndex === WAVES.length - 1 ? 'Boss wave' : `Wave ${this.waveIndex + 1}`
+    this.bannerBody = preview
+    this.bannerT = 1.7
     this.phase = 'wave'
     this.waveTime = 0
     this.spawnIndex = 0
@@ -953,7 +1068,7 @@ export class Game {
     let time = 0.35
     for (const group of WAVES[this.waveIndex].groups) {
       for (let i = 0; i < group.count; i++) {
-        this.schedule.push({ time, kind: group.kind })
+        this.schedule.push({ time, kind: group.kind, entry: group.entry ?? 0, hpMul: group.hpMul ?? 1 })
         time += group.interval
       }
       time += 0.4
@@ -977,6 +1092,13 @@ export class Game {
     this.refreshHud()
   }
 
+  toggleDamage(): void {
+    this.showDamage = !this.showDamage
+    localStorage.setItem('tiny-td-dmg', this.showDamage ? '1' : '0')
+    audio.play('click')
+    this.refreshHud()
+  }
+
   /** Buy or sell whatever is selected. Used by the on-screen tray. */
   act(part: string): boolean {
     if (!this.selected) return false
@@ -989,6 +1111,7 @@ export class Game {
     if (!cell) return false
     if (part === 'base') return this.placeBase(cell)
     if (part === 'sell') return this.sell(cell)
+    if (part === 'upgrade') return this.buyUpgrade(cell)
     return this.buyPart(cell, part)
   }
 
@@ -1005,6 +1128,7 @@ export class Game {
     this.selected = cell
     this.dismissHint()
     audio.play('place')
+    audio.play('thud')
     this.fx.burst(cell.x, 0.3, cell.z, 0xe6d2a8, 12, 2)
     this.shake = Math.max(this.shake, 0.04)
     this.syncSelection()
@@ -1019,7 +1143,8 @@ export class Game {
       const id = part.slice(7)
       if (!isMiddle(id)) return false
       if (tower.middles.length >= MAX_MIDDLES) return false
-      const cost = MIDDLES[id].cost
+      const layers = tower.middles.length + (tower.roof ? 1 : 0)
+      const cost = stackCost(MIDDLES[id].cost, layers)
       if (this.gold < cost) return false
       this.gold -= cost
       tower.spent += cost
@@ -1027,7 +1152,8 @@ export class Game {
     } else if (part.startsWith('roof-')) {
       const id = part.slice(5)
       if (!isRoof(id)) return false
-      const cost = ROOFS[id].cost
+      const layers = tower.middles.length + (tower.roof ? 1 : 0)
+      const cost = stackCost(ROOFS[id].cost, layers)
       if (this.gold < cost) return false
       this.gold -= cost
       tower.spent += cost
@@ -1043,8 +1169,24 @@ export class Game {
       return false
     }
     tower.rebuild(true)
-    audio.play('place')
+    audio.play(part.startsWith('middle-') || part.startsWith('roof-') ? 'thud' : 'place')
     this.fx.burst(cell.x, 0.8, cell.z, 0xffe7a8, 10, 2.2)
+    this.syncSelection()
+    this.refreshHud()
+    return true
+  }
+
+  private buyUpgrade(cell: MapCell): boolean {
+    const tower = this.towerAt(cell.x, cell.z)
+    if (!tower || tower.tier >= MAX_UPGRADE) return false
+    const cost = UPGRADE_COST[tower.tier]
+    if (this.gold < cost) return false
+    this.gold -= cost
+    tower.spent += cost
+    tower.tier += 1
+    tower.rebuild(true)
+    audio.play('thud')
+    this.fx.burst(cell.x, 0.9, cell.z, 0xffd27a, 8, 2)
     this.syncSelection()
     this.refreshHud()
     return true
@@ -1109,27 +1251,40 @@ export class Game {
     if (tower) {
       const stats = tower.stats()
       const actions: ActionButton[] = []
+      const layers = tower.middles.length + (tower.roof ? 1 : 0)
+      const nextTier = tower.tier >= MAX_UPGRADE ? null : UPGRADE_COST[tower.tier]
+      actions.push({
+        id: 'upgrade',
+        label: 'Upgrade',
+        effect: nextTier == null ? 'Maxed' : `Tier ${tower.tier + 1}`,
+        detail: 'Stronger shots. The weapon grows and the trim changes color.',
+        cost: nextTier == null ? 'Max' : String(nextTier),
+        enabled: nextTier != null && this.gold >= nextTier,
+        tone: 'yellow',
+      })
       for (const id of ['a', 'b', 'c'] as MiddleId[]) {
         const def = MIDDLES[id]
+        const cost = stackCost(def.cost, layers)
         actions.push({
           id: `middle-${id}`,
           label: def.label,
           effect: MIDDLE_EFFECT[id],
           detail: def.blurb,
-          cost: String(def.cost),
-          enabled: this.gold >= def.cost && tower.middles.length < MAX_MIDDLES,
+          cost: String(cost),
+          enabled: this.gold >= cost && tower.middles.length < MAX_MIDDLES,
           tone: 'blue',
         })
       }
       for (const id of ['a', 'b', 'c'] as RoofId[]) {
         const def = ROOFS[id]
+        const cost = stackCost(def.cost, layers)
         actions.push({
           id: `roof-${id}`,
           label: def.label,
           effect: ROOF_EFFECT[id],
           detail: def.blurb,
-          cost: String(def.cost),
-          enabled: this.gold >= def.cost,
+          cost: String(cost),
+          enabled: this.gold >= cost,
           tone: 'yellow',
         })
       }
@@ -1157,10 +1312,11 @@ export class Game {
       })
       const weapon = tower.weapon ? WEAPONS[tower.weapon].label : 'No weapon'
       const rate = stats.cooldown < 100 ? `${(1 / stats.cooldown).toFixed(1)}/s` : '—'
+      const tier = tower.tier > 0 ? ` · tier ${tower.tier}` : ''
       return {
         title: 'Your tower',
         blurb: '',
-        stats: `Range ${stats.range.toFixed(1)} · ${rate} · ${weapon}`,
+        stats: `Range ${stats.range.toFixed(1)} · ${rate} · ${weapon}${tier}`,
         actions,
       }
     }
@@ -1203,15 +1359,18 @@ export class Game {
 
   private refreshHud(): void {
     const playing = this.phase === 'ready' || this.phase === 'breather'
-    let startLabel = 'Start wave'
+    let startLabel = 'Call wave'
     if (this.phase === 'breather') {
       const secs = Math.max(0, Math.ceil(this.countdown))
-      startLabel = this.countdown > 0.75 ? `Start +${EARLY_BONUS} · ${secs}s` : 'Start wave'
+      const bonus = earlyBonus(this.waveIndex)
+      startLabel = this.countdown > 0.75 ? `Call +${bonus} · ${secs}s` : 'Call wave'
     } else if (this.phase === 'wave') {
       startLabel = `${this.enemies.length} UFOs`
     } else if (this.phase === 'victory') startLabel = 'Clear'
     else if (this.phase === 'defeat') startLabel = 'Over'
     const waveNo = Math.min(this.waveIndex + 1, WAVES.length)
+    const preview = playing && this.waveIndex < WAVES.length ? wavePreview(WAVES[this.waveIndex]) : null
+    const stars = starCount(this.livingPets())
     let waveLabel = `Wave ${waveNo}/${WAVES.length}`
     if (this.phase === 'breather') waveLabel += ` · ${Math.max(0, Math.ceil(this.countdown))}s`
     if (this.phase === 'victory') waveLabel = 'All clear'
@@ -1225,22 +1384,31 @@ export class Game {
       enemies: this.enemies.length,
       speed: this.speedChoice,
       muted: audio.muted,
+      damageNumbers: this.showDamage,
       hint: this.hint && this.towers.length === 0,
       startLabel,
       startEnabled: playing,
+      preview,
+      bannerTitle: this.bannerTitle,
+      bannerBody: this.bannerBody,
       selection: this.selectionView(),
       end:
         this.phase === 'victory'
           ? {
               kind: 'win',
               title: 'The pets are safe',
-              detail: `All ${WAVES.length} waves held. The pen is still full enough to cheer.`,
+              detail:
+                stars >= 3
+                  ? `All ${WAVES.length} waves held, and every pet waddled home.`
+                  : `All ${WAVES.length} waves held. ${this.livingPets()} pets made it home.`,
+              stars,
             }
           : this.phase === 'defeat'
             ? {
                 kind: 'lose',
                 title: 'The pen is empty',
-                detail: `A UFO beamed the last pet away on wave ${waveNo}.`,
+                detail: `A UFO carried the last pet out on wave ${waveNo}.`,
+                stars: 0,
               }
             : null,
     })
@@ -1262,6 +1430,7 @@ export class Game {
   private lose(): void {
     if (this.phase === 'victory' || this.phase === 'defeat') return
     this.phase = 'defeat'
+    this.noteWave(Math.min(this.waveIndex + 1, WAVES.length))
     audio.duck(true)
     audio.play('lose')
     this.syncSelection()
@@ -1272,17 +1441,24 @@ export class Game {
     for (const enemy of this.enemies) this.scene.remove(enemy.group)
     for (const proj of this.projectiles) this.scene.remove(proj.mesh)
     for (const pet of this.pets) this.scene.remove(pet.group)
-    if (this.abduction) {
-      this.scene.remove(this.abduction.beam)
-      this.scene.remove(this.abduction.burst)
+    for (const carry of this.carries) {
+      this.scene.remove(carry.beam)
+      this.scene.remove(carry.burst)
+      this.scene.remove(carry.glow)
     }
     this.towers = []
     this.enemies = []
     this.pets = []
     this.projectiles = []
-    this.queue = []
-    this.abduction = null
+    this.carries = []
     this.pending = []
+    this.rescues = 0
+    this.abductions = 0
+    this.waveLog = []
+    this.effectiveAt.clear()
+    this.bannerTitle = null
+    this.bannerBody = null
+    this.bannerT = 0
     this.gold = START_GOLD
     this.phase = 'ready'
     this.waveIndex = 0
@@ -1323,8 +1499,13 @@ export class Game {
         leaks: this.leaks,
         towers: this.towers.length,
         spawned: this.spawned,
+        rescues: this.rescues,
+        abductions: this.abductions,
+        stars: starCount(this.livingPets()),
+        carries: this.carries.length,
         fps: Math.round(this.fps),
         zoom: Math.round(this.distance * 10) / 10,
+        log: this.waveLog.map((row) => ({ ...row })),
       }),
       cellKind: (x, z) => this.map.cells.get(cellKey(x, z))?.kind ?? null,
       project: (x, z, y = 0.4) => {
@@ -1361,13 +1542,50 @@ export class Game {
         this.updateCamera()
       },
       debugAbduct: () => {
-        const enemy = this.spawnEnemy('warden')
+        const enemy = this.spawnEnemy('tank')
         const goal = this.map.points[this.map.points.length - 1]
         enemy.waypoint = this.map.points.length - 1
-        enemy.pos.set(goal.x, 1.15, goal.z)
+        enemy.pos.set(goal.x, 1.7, goal.z)
         enemy.group.position.copy(enemy.pos)
         const pet = this.pets.find((candidate) => candidate.alive && !candidate.reserved)
-        if (pet) this.beginAbduction(enemy, pet)
+        if (pet) this.beginCarry(enemy, pet)
+      },
+      debugRescue: () => {
+        const carry = this.carries[0]
+        if (!carry) return
+        carry.phase = 'flee'
+        carry.enemy.abducting = false
+        carry.enemy.fleeing = true
+        this.kill(carry.enemy)
+      },
+      debugBoss: () => {
+        this.phase = 'wave'
+        this.waveIndex = WAVES.length - 1
+        this.bannerTitle = 'Boss wave'
+        this.bannerBody = wavePreview(WAVES[WAVES.length - 1])
+        this.bannerT = 8
+        const boss = this.spawnEnemy('boss', 1, 0.55)
+        boss.pos.y = ENEMIES.boss.hover
+        this.spawnEnemy('swarm', 1, 0.42)
+        this.spawnEnemy('tank', 1, 0.35)
+        this.refreshHud()
+      },
+      debugPreview: () => {
+        this.phase = 'breather'
+        this.waveIndex = 4
+        this.countdown = 8
+        this.bannerTitle = null
+        this.bannerBody = null
+        this.refreshHud()
+      },
+      debugPop: () => {
+        this.phase = 'wave'
+        const scout = this.spawnEnemy('scout', 1, 0.48)
+        const tank = this.spawnEnemy('tank', 1, 0.4)
+        this.fx.popup(scout.pos.x, scout.pos.y + 0.9, scout.pos.z, 'Effective!', '#b6ff8a', 30)
+        this.fx.popup(scout.pos.x + 0.15, scout.pos.y + 0.45, scout.pos.z, '14', '#fff6ea', 30)
+        this.fx.popup(tank.pos.x, tank.pos.y + 0.5, tank.pos.z, '9', '#fff6ea', 30)
+        this.refreshHud()
       },
       deselect: () => {
         this.selected = null

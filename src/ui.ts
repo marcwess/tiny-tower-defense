@@ -27,11 +27,15 @@ export interface HudState {
   enemies: number
   speed: number
   muted: boolean
+  damageNumbers: boolean
   hint: boolean
   startLabel: string
   startEnabled: boolean
+  preview: string | null
+  bannerTitle: string | null
+  bannerBody: string | null
   selection: SelectionView | null
-  end: { kind: 'win' | 'lose'; title: string; detail: string } | null
+  end: { kind: 'win' | 'lose'; title: string; detail: string; stars: number } | null
 }
 
 export class Hud {
@@ -39,6 +43,7 @@ export class Hud {
   onStart: () => void = () => {}
   onSpeed: () => void = () => {}
   onMute: () => void = () => {}
+  onDamage: () => void = () => {}
   onRetry: () => void = () => {}
 
   private root: HTMLElement
@@ -58,6 +63,12 @@ export class Hud {
   private endTitle: HTMLElement
   private endDetail: HTMLElement
   private endIcon: HTMLImageElement
+  private starsEl: HTMLElement
+  private previewEl: HTMLElement
+  private bannerEl: HTMLElement
+  private bannerTitle: HTMLElement
+  private bannerBody: HTMLElement
+  private damageEl: HTMLButtonElement
   private loadingEl: HTMLElement
   private loadingText: HTMLElement
   private signature = ''
@@ -77,7 +88,12 @@ export class Hud {
           <div class="pill pets" id="pets"><img alt="" src="${asset('assets/icons/heart.png')}" /><span>5</span></div>
           <button type="button" id="mute" class="round" aria-label="Sound"><img alt="" src="${asset('assets/icons/audio-on.png')}" /></button>
         </header>
+        <div id="banner" hidden>
+          <p id="banner-title"></p>
+          <p id="banner-body"></p>
+        </div>
         <div id="dock">
+          <p id="preview" hidden></p>
           <p id="hint"></p>
           <section id="card" hidden>
             <h2 id="card-title"></h2>
@@ -87,13 +103,15 @@ export class Hud {
           </section>
           <div id="actions">
             <button type="button" id="speed" class="btn yellow">1×</button>
-            <button type="button" id="start" class="btn green">Start wave</button>
+            <button type="button" id="dmg" class="btn yellow" aria-pressed="true">Nums</button>
+            <button type="button" id="start" class="btn green">Call wave</button>
           </div>
         </div>
       </div>
       <div id="end" hidden>
         <div class="card end-card">
           <img id="end-icon" alt="" src="${asset('assets/icons/heart.png')}" />
+          <div id="stars" hidden></div>
           <h1 id="end-title"></h1>
           <p id="end-detail"></p>
           <button type="button" id="retry" class="btn green">Retry</button>
@@ -122,12 +140,19 @@ export class Hud {
     this.endTitle = this.need('#end-title')
     this.endDetail = this.need('#end-detail')
     this.endIcon = this.need('#end-icon') as HTMLImageElement
+    this.starsEl = this.need('#stars')
+    this.previewEl = this.need('#preview')
+    this.bannerEl = this.need('#banner')
+    this.bannerTitle = this.need('#banner-title')
+    this.bannerBody = this.need('#banner-body')
+    this.damageEl = this.need('#dmg') as HTMLButtonElement
     this.loadingEl = this.need('#loading')
     this.loadingText = this.need('#loading-text')
 
     this.speedEl.addEventListener('click', () => this.onSpeed())
     this.startEl.addEventListener('click', () => this.onStart())
     this.muteEl.addEventListener('click', () => this.onMute())
+    this.damageEl.addEventListener('click', () => this.onDamage())
     this.need('#retry').addEventListener('click', () => this.onRetry())
     this.trayEl.addEventListener('pointerdown', (event) => {
       const button = (event.target as HTMLElement).closest('button')
@@ -224,12 +249,20 @@ export class Hud {
     this.muteEl.setAttribute('aria-pressed', state.muted ? 'true' : 'false')
     this.speedEl.textContent = `${state.speed}×`
     this.speedEl.classList.toggle('pressed', state.speed > 1)
+    this.damageEl.textContent = state.damageNumbers ? 'Nums' : 'Nums off'
+    this.damageEl.setAttribute('aria-pressed', state.damageNumbers ? 'true' : 'false')
+    this.damageEl.classList.toggle('pressed', state.damageNumbers)
     this.startEl.textContent = state.startLabel
     this.startEl.disabled = !state.startEnabled
     this.hintEl.hidden = !state.hint
     if (state.hint) {
       this.hintEl.textContent = 'Tap the grass under the arrow, then stack a weapon. Taller towers reach farther.'
     }
+    this.previewEl.hidden = !state.preview
+    this.previewEl.textContent = state.preview ?? ''
+    this.bannerEl.hidden = !state.bannerTitle
+    this.bannerTitle.textContent = state.bannerTitle ?? ''
+    this.bannerBody.textContent = state.bannerBody ?? ''
 
     if (!state.selection) {
       this.cardEl.hidden = true
@@ -278,6 +311,19 @@ export class Hud {
       this.endEl.dataset.kind = state.end.kind
       this.endTitle.textContent = state.end.title
       this.endDetail.textContent = state.end.detail
+      const stars = state.end.kind === 'win' ? state.end.stars : 0
+      this.starsEl.hidden = stars <= 0
+      this.starsEl.innerHTML = ''
+      if (stars > 0) {
+        const filled = asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')
+        const empty = asset('assets/ui/ui-pack/PNG/Yellow/Double/star_outline.png')
+        for (let i = 0; i < 3; i++) {
+          const img = document.createElement('img')
+          img.alt = i < stars ? 'Star' : 'Empty star'
+          img.src = i < stars ? filled : empty
+          this.starsEl.appendChild(img)
+        }
+      }
       this.endIcon.src = asset(
         state.end.kind === 'win' ? 'assets/icons/heart.png' : 'assets/ui/ui-pack/PNG/Red/Double/icon_cross.png',
       )

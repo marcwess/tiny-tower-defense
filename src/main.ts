@@ -15,6 +15,7 @@ hud.onStart = () => {
 }
 hud.onSpeed = () => game.toggleSpeed()
 hud.onMute = () => game.toggleMute()
+hud.onDamage = () => game.toggleDamage()
 hud.onRetry = () => {
   audio.unlock()
   game.retry()
@@ -47,8 +48,13 @@ void game.init().catch((error: unknown) => {
       leaks: 0,
       towers: 0,
       spawned: 0,
+      rescues: 0,
+      abductions: 0,
+      stars: 0,
+      carries: 0,
       fps: 0,
       zoom: 0,
+      log: [],
     }),
     cellKind: () => null,
     project: () => null,
@@ -61,6 +67,10 @@ void game.init().catch((error: unknown) => {
     deselect: () => {},
     select: () => {},
     debugAbduct: () => {},
+    debugRescue: () => {},
+    debugBoss: () => {},
+    debugPreview: () => {},
+    debugPop: () => {},
     debugWin: () => {},
     debugLose: () => {},
     retry: () => {},
