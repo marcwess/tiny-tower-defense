@@ -43,6 +43,8 @@ export interface CoachView {
   lane: Array<{ x: number; y: number }>
   /** Keep the arrow on this side of the bubble so it stays on the real control. */
   pin?: 'down' | 'up' | 'left' | 'right'
+  /** Park the bubble above the shop or the call bar and stretch the arrow down to the target. */
+  float?: 'dock' | 'bar'
 }
 
 export interface HudState {
@@ -185,6 +187,7 @@ export class Hud {
         </div>
       </div>
       <div id="coach" hidden>
+        <span id="coach-stem"></span>
         <img id="coach-arrow" alt="" src="${asset('assets/ui/ui-pack/PNG/Green/Default/arrow_basic_s.png')}" />
         <p id="coach-text"></p>
         <button type="button" id="coach-next" class="btn yellow">Next</button>
@@ -538,12 +541,49 @@ export class Hud {
     this.coachEl.hidden = false
     const spot = this.placeCoach(coach)
     this.coachEl.dataset.side = spot.side
+    this.coachEl.dataset.reach = spot.reach ? '1' : ''
     this.coachEl.style.left = `${spot.x}px`
     this.coachEl.style.top = `${spot.y}px`
   }
 
+  /** Bubble sits under the HUD and above the dock. The arrow head lands on the target. */
+  private placeFloating(coach: CoachView): { x: number; y: number; side: string; reach: boolean } {
+    const bubbleW = this.coachEl.offsetWidth || 220
+    const bubbleH = this.coachEl.offsetHeight || 96
+    const vw = window.innerWidth
+    const margin = 8
+    const target = coach.target
+    const cx = (target.l + target.r) / 2
+    const hud = document.querySelector('#top')?.getBoundingClientRect()
+    const minTop = Math.max(margin, Math.round((hud?.bottom ?? 48) + 6))
+    const ceiling = this.floatCeiling(coach.float ?? 'dock')
+    let y = (Number.isFinite(ceiling) ? ceiling : target.t) - 8 - bubbleH
+    if (y < minTop) y = minTop
+    const maxY = window.innerHeight - margin - bubbleH
+    if (y > maxY) y = maxY
+    let x = cx - bubbleW / 2
+    x = Math.min(vw - margin - bubbleW, Math.max(margin, x))
+    const tip = target.t + 22
+    const reach = Math.max(28, tip - (y + bubbleH))
+    this.aimReach(x, bubbleW, cx, reach)
+    return { x, y, side: 'down', reach: true }
+  }
+
+  private floatCeiling(kind: 'dock' | 'bar'): number {
+    const ids = kind === 'dock' ? ['#preview', '#card', '#hint'] : ['#preview', '#actions']
+    let top = Infinity
+    for (const id of ids) {
+      const node = document.querySelector(id)
+      if (!(node instanceof HTMLElement) || node.hidden) continue
+      const box = node.getBoundingClientRect()
+      if (box.height < 2) continue
+      top = Math.min(top, box.top)
+    }
+    return top
+  }
+
   /** Arrow tip a few pixels inside the target, on the pinned side. */
-  private placePinned(coach: CoachView): { x: number; y: number; side: string } {
+  private placePinned(coach: CoachView): { x: number; y: number; side: string; reach: boolean } {
     const bubbleW = this.coachEl.offsetWidth || 220
     const bubbleH = this.coachEl.offsetHeight || 96
     const vw = window.innerWidth
@@ -569,11 +609,11 @@ export class Hud {
       const onTarget = tipX > target.l + 4 && tipX < target.r - 2
       if (onTarget && !this.hitsAvoid(altX, altY, bubbleW, bubbleH, coach.avoid)) {
         this.aimArrow('right', altX, bubbleW, cx)
-        return { x: altX, y: altY, side: 'right' }
+        return { x: altX, y: altY, side: 'right', reach: false }
       }
     }
     this.aimArrow(side, x, bubbleW, cx)
-    return { x, y, side }
+    return { x, y, side, reach: false }
   }
 
   private hitsAvoid(x: number, y: number, w: number, h: number, avoid: CoachBox[]): boolean {
@@ -588,6 +628,9 @@ export class Hud {
     arrow.style.right = ''
     arrow.style.top = ''
     arrow.style.bottom = ''
+    arrow.style.transform = ''
+    const stem = this.coachEl.querySelector('#coach-stem')
+    if (stem instanceof HTMLElement) stem.style.height = '0px'
     if (side === 'down' || side === 'up') {
       const rel = (cx - x) / bubbleW
       arrow.style.left = `${Math.min(78, Math.max(22, rel * 100))}%`
@@ -595,7 +638,29 @@ export class Hud {
     }
   }
 
-  private placeCoach(coach: CoachView): { x: number; y: number; side: string } {
+  /** Drop the arrow head on the target and connect it back to the bubble. */
+  private aimReach(x: number, bubbleW: number, cx: number, reach: number): void {
+    const arrow = this.coachEl.querySelector('#coach-arrow')
+    const stem = this.coachEl.querySelector('#coach-stem')
+    const rel = Math.min(94, Math.max(6, ((cx - x) / bubbleW) * 100))
+    if (arrow instanceof HTMLElement) {
+      arrow.style.left = `${rel}%`
+      arrow.style.right = 'auto'
+      arrow.style.top = 'auto'
+      arrow.style.bottom = `${-reach}px`
+      arrow.style.transform = 'translateX(-50%)'
+    }
+    if (stem instanceof HTMLElement) {
+      stem.style.left = `${rel}%`
+      stem.style.top = '100%'
+      stem.style.bottom = 'auto'
+      stem.style.height = `${Math.max(0, reach - 18)}px`
+      stem.style.transform = 'translateX(-50%)'
+    }
+  }
+
+  private placeCoach(coach: CoachView): { x: number; y: number; side: string; reach: boolean } {
+    if (coach.float) return this.placeFloating(coach)
     if (coach.pin) return this.placePinned(coach)
     const bubbleW = this.coachEl.offsetWidth || 220
     const bubbleH = this.coachEl.offsetHeight || 96
@@ -652,7 +717,7 @@ export class Hud {
     const side = Math.abs(cx - bx) > Math.abs(cy - by) ? (cx > bx ? 'right' : 'left') : cy > by ? 'down' : 'up'
     best.side = side
     this.aimArrow(side, best.x, bubbleW, cx)
-    return best
+    return { x: best.x, y: best.y, side: best.side, reach: false }
   }
 
   private padBox(box: CoachBox, pad: number): CoachBox {

@@ -123,6 +123,11 @@ async function assertCoach(page, label) {
     const weapons = [...document.querySelectorAll('[data-part="turret"], [data-part="ballista"], [data-part="cannon"], [data-part="catapult"]')]
       .map((node) => ({ id: node.dataset.part, ...rect(node) }))
       .filter((item) => item.t != null)
+    const shop = [...document.querySelectorAll('[data-part="roof-b"], [data-part="roof-c"], [data-part="ballista"]')]
+      .map((node) => ({ id: node.dataset.part, ...rect(node) }))
+      .filter((item) => item.t != null)
+    const hud = document.querySelector('#top')
+    const hudBottom = hud instanceof HTMLElement ? hud.getBoundingClientRect().bottom : 0
     return {
       side: bubble.dataset.side ?? '',
       top: box.top,
@@ -133,6 +138,8 @@ async function assertCoach(page, label) {
       start,
       arrow,
       weapons,
+      shop,
+      hudBottom,
       w: window.innerWidth,
       h: window.innerHeight,
     }
@@ -142,8 +149,17 @@ async function assertCoach(page, label) {
     throw new Error(`${label} bubble is off screen: ${JSON.stringify(coach)}`)
   }
   if (label.includes('step 2')) {
-    const hit = (coach.weapons ?? []).find((weapon) => arrowHits(coach.arrow, weapon))
-    if (!hit) throw new Error(`${label} arrow missed the weapon buttons: ${JSON.stringify(coach.arrow)}`)
+    const turret = (coach.weapons ?? []).find((weapon) => weapon.id === 'turret')
+    if (!arrowHits(coach.arrow, turret)) {
+      throw new Error(`${label} arrow missed the Turret button: ${JSON.stringify(coach.arrow)}`)
+    }
+    if (coach.top < coach.hudBottom - 1) {
+      throw new Error(`${label} bubble covers the HUD: ${JSON.stringify(coach)}`)
+    }
+    const covered = (coach.shop ?? []).filter((button) => boxesOverlap(coach, button))
+    if (covered.length) {
+      throw new Error(`${label} bubble covers shop buttons: ${JSON.stringify(covered)}`)
+    }
     if (coach.preview && boxesOverlap(coach, coach.preview)) {
       throw new Error(`${label} bubble covers the preview chip: ${JSON.stringify(coach)}`)
     }
@@ -151,6 +167,12 @@ async function assertCoach(page, label) {
   if (label.includes('step 5')) {
     if (!arrowHits(coach.arrow, coach.start)) {
       throw new Error(`${label} arrow missed Call wave: ${JSON.stringify({ arrow: coach.arrow, start: coach.start })}`)
+    }
+    if (coach.preview && boxesOverlap(coach, coach.preview)) {
+      throw new Error(`${label} bubble covers the preview chip: ${JSON.stringify(coach)}`)
+    }
+    if (boxesOverlap(coach, coach.start)) {
+      throw new Error(`${label} bubble covers Call wave: ${JSON.stringify(coach)}`)
     }
   }
   return coach

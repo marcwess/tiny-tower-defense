@@ -1384,6 +1384,7 @@ export class Game {
       '#b6ff8a',
       1.2,
       this.effectiveStack * 44,
+      1,
     )
   }
 
@@ -1435,10 +1436,11 @@ export class Game {
     color: string,
     life = 0.9,
     screenLift = 0,
+    priority = 0,
   ): void {
     _v.set(x, y, z).project(this.camera)
     if (_v.z > 1) {
-      this.fx.popup(x, y, z, text, color, life)
+      this.fx.popup(x, y, z, text, color, life, priority)
       return
     }
     const rect = this.renderer.domElement.getBoundingClientRect()
@@ -1457,7 +1459,7 @@ export class Game {
     _v.x = (px / rect.width) * 2 - 1
     _v.y = -((py / rect.height) * 2 - 1)
     _v.unproject(this.camera)
-    this.fx.popup(_v.x, _v.y, _v.z, text, color, life)
+    this.fx.popup(_v.x, _v.y, _v.z, text, color, life, priority)
   }
 
   private keepPopupsUnderHud(): void {
@@ -1466,6 +1468,7 @@ export class Game {
     const hud = document.querySelector('#top')?.getBoundingClientRect()
     const minTop = (hud ? hud.bottom - canvas.top : 54) + 6
     this.fx.keepUnderHud(this.camera, canvas.height, minTop)
+    this.fx.separateFromBanners(this.camera, canvas.width, canvas.height)
   }
 
   private kill(enemy: Enemy): void {
@@ -1951,6 +1954,7 @@ export class Game {
     avoid: Array<{ l: number; t: number; r: number; b: number }>
     lane: Array<{ x: number; y: number }>
     pin?: 'down' | 'up' | 'left' | 'right'
+    float?: 'dock' | 'bar'
   } | null {
     if (this.tutorStep < 1 || this.tutorStep > 5 || this.phase === 'title' || this.phase === 'victory' || this.phase === 'defeat') {
       return null
@@ -1961,7 +1965,8 @@ export class Game {
       .map((point) => this.projectWorld(point.x, 0.8, point.z))
       .filter((point): point is { x: number; y: number } => !!point)
     const pin = this.tutorStep === 2 || this.tutorStep === 5 ? 'down' : undefined
-    return { text: COACH[this.tutorStep], target, avoid: this.coachAvoid(), lane, pin }
+    const float = this.tutorStep === 2 ? 'dock' : this.tutorStep === 5 ? 'bar' : undefined
+    return { text: COACH[this.tutorStep], target, avoid: this.coachAvoid(), lane, pin, float }
   }
 
   private coachTarget(): { l: number; t: number; r: number; b: number } | null {
@@ -2362,8 +2367,8 @@ export class Game {
         this.phase = 'wave'
         const scout = this.spawnEnemy('scout', 1, 0.48)
         const tank = this.spawnEnemy('tank', 1, 0.4)
-        this.popText(scout.pos.x, scout.pos.y + 1.05, scout.pos.z, 'Effective!', '#b6ff8a', 30)
-        this.popText(scout.pos.x + 0.04, scout.pos.y + 1.05, scout.pos.z + 0.02, 'Effective!', '#b6ff8a', 30, 46)
+        this.popText(scout.pos.x, scout.pos.y + 1.05, scout.pos.z, 'Effective!', '#b6ff8a', 30, 0, 1)
+        this.popText(scout.pos.x + 0.04, scout.pos.y + 1.05, scout.pos.z + 0.02, 'Effective!', '#b6ff8a', 30, 46, 1)
         this.popText(scout.pos.x + 0.18, scout.pos.y + 0.42, scout.pos.z, '14', '#fff6ea', 30)
         this.popText(tank.pos.x, tank.pos.y + 0.45, tank.pos.z, '9', '#fff6ea', 30)
         this.refreshHud()

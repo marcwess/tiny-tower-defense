@@ -538,11 +538,23 @@ button:active:not(:disabled) { transform: translateY(2px) scale(0.985); }
   overflow: visible;
 }
 
+#coach-stem {
+  display: none;
+  position: absolute;
+  width: 3px;
+  background: #16bb77;
+  pointer-events: none;
+  z-index: 0;
+}
+
+#coach[data-reach='1'] #coach-stem { display: block; }
+
 #coach-arrow {
   position: absolute;
   width: 22px;
   height: 22px;
   pointer-events: none;
+  z-index: 1;
 }
 
 #coach[data-side='down'] #coach-arrow { left: 50%; bottom: -8px; transform: translateX(-50%); }

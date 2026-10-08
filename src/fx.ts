@@ -23,6 +23,8 @@ interface Popup {
   max: number
   vy: number
   active: boolean
+  /** 1 for Effective! banners, which stay in front of damage numbers. */
+  priority: number
 }
 
 interface Chunk {
@@ -55,6 +57,7 @@ export class Fx {
   private popups: Popup[] = []
   private readonly popA = new THREE.Vector3()
   private readonly popB = new THREE.Vector3()
+  private readonly popC = new THREE.Vector3()
   private popupFree: Popup[] = []
   private chunks: Chunk[] = []
   private chunkFree: Chunk[] = []
@@ -198,10 +201,10 @@ export class Fx {
     const sprite = new THREE.Sprite(mat)
     sprite.visible = false
     this.scene.add(sprite)
-    return { sprite, canvas, ctx, tex, life: 0, max: 1, vy: 0.65, active: false }
+    return { sprite, canvas, ctx, tex, life: 0, max: 1, vy: 0.65, active: false, priority: 0 }
   }
 
-  popup(x: number, y: number, z: number, text: string, color: string, life = 0.9): void {
+  popup(x: number, y: number, z: number, text: string, color: string, life = 0.9, priority = 0): void {
     const slot = this.takePopup()
     if (!slot) return
     const fontSize = 72
@@ -240,6 +243,8 @@ export class Fx {
     slot.max = life
     slot.vy = 0.65
     slot.active = true
+    slot.priority = priority
+    slot.sprite.renderOrder = priority > 0 ? 5 : 1
     this.popups.push(slot)
   }
 
@@ -265,6 +270,69 @@ export class Fx {
       popup.sprite.position.copy(this.popA.unproject(camera))
       popup.vy = 0
     }
+  }
+
+  /** Slide damage numbers off any Effective! banner so the banner stays readable. */
+  separateFromBanners(camera: THREE.Camera, viewWidth: number, viewHeight: number): void {
+    if (viewWidth < 2 || viewHeight < 2) return
+    camera.updateMatrixWorld()
+    const laid = this.popups.map((popup) => ({ popup, box: this.popupScreen(popup, camera, viewWidth, viewHeight) }))
+    const banners = laid.filter((item) => item.popup.priority > 0 && item.box)
+    if (!banners.length) return
+    for (const item of laid) {
+      if (item.popup.priority > 0 || !item.box) continue
+      let box = item.box
+      for (let pass = 0; pass < 4; pass++) {
+        let moved = false
+        for (const banner of banners) {
+          if (!banner.box || !this.screenOverlap(box, banner.box, 3)) continue
+          const down = banner.box.b + 8 - box.t
+          if (down <= 0) continue
+          this.shiftPopup(item.popup, camera, viewWidth, viewHeight, 0, down)
+          box = { l: box.l, r: box.r, t: box.t + down, b: box.b + down }
+          moved = true
+        }
+        if (!moved) break
+      }
+    }
+  }
+
+  private popupScreen(
+    popup: Popup,
+    camera: THREE.Camera,
+    viewWidth: number,
+    viewHeight: number,
+  ): { l: number; t: number; r: number; b: number } | null {
+    const pos = popup.sprite.position
+    this.popA.copy(pos).project(camera)
+    if (this.popA.z > 1) return null
+    const cx = (this.popA.x * 0.5 + 0.5) * viewWidth
+    const cy = (-this.popA.y * 0.5 + 0.5) * viewHeight
+    this.popB.setFromMatrixColumn(camera.matrixWorld, 1).setLength(popup.sprite.scale.y * 0.5).add(pos).project(camera)
+    this.popC.setFromMatrixColumn(camera.matrixWorld, 0).setLength(popup.sprite.scale.x * 0.5).add(pos).project(camera)
+    const top = (-this.popB.y * 0.5 + 0.5) * viewHeight
+    const side = (this.popC.x * 0.5 + 0.5) * viewWidth
+    const halfH = Math.max(8, Math.abs(cy - top))
+    const halfW = Math.max(8, Math.abs(side - cx))
+    return { l: cx - halfW, r: cx + halfW, t: cy - halfH, b: cy + halfH }
+  }
+
+  private screenOverlap(
+    a: { l: number; t: number; r: number; b: number },
+    b: { l: number; t: number; r: number; b: number },
+    pad: number,
+  ): boolean {
+    return a.l < b.r + pad && a.r > b.l - pad && a.t < b.b + pad && a.b > b.t - pad
+  }
+
+  private shiftPopup(popup: Popup, camera: THREE.Camera, viewWidth: number, viewHeight: number, dx: number, dy: number): void {
+    this.popA.copy(popup.sprite.position).project(camera)
+    if (this.popA.z > 1) return
+    const px = (this.popA.x * 0.5 + 0.5) * viewWidth + dx
+    const py = Math.min(viewHeight - 12, (-this.popA.y * 0.5 + 0.5) * viewHeight + dy)
+    this.popA.x = (px / viewWidth) * 2 - 1
+    this.popA.y = -((py / viewHeight) * 2 - 1)
+    popup.sprite.position.copy(this.popA.unproject(camera))
   }
 
   /** Drop floating combat text, debris, and rings. Used when a round ends. */
