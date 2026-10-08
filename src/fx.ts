@@ -150,36 +150,84 @@ export class Fx {
   popup(x: number, y: number, z: number, text: string, color: string, life = 0.9): void {
     if (this.popups.length > 16) {
       const old = this.popups.shift()
-      if (old) {
-        this.scene.remove(old.sprite)
-        const oldMat = old.sprite.material as THREE.SpriteMaterial
-        oldMat.map?.dispose()
-        oldMat.dispose()
-      }
+      if (old) this.dropPopup(old)
     }
+    const fontSize = 72
+    const font = `700 ${fontSize}px "Kenney Bold", "Kenney Future", sans-serif`
+    const probe = document.createElement('canvas').getContext('2d')
+    if (!probe) return
+    probe.font = font
+    const measured = Math.ceil(probe.measureText(text).width)
+    // Kenney Bold's outlines sit 0.25em above the em box, and the stroke needs its own margin.
+    const stroke = 16
+    const padX = stroke + 36
+    const ascent = Math.ceil(fontSize * 1.4) + stroke
+    const descent = Math.ceil(fontSize * 0.45) + stroke
+    const width = Math.max(64, measured + padX * 2)
+    const height = ascent + descent
     const canvas = document.createElement('canvas')
-    canvas.width = 512
-    canvas.height = 128
+    canvas.width = width
+    canvas.height = height
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    ctx.clearRect(0, 0, 512, 128)
-    ctx.font = '700 64px "Kenney Bold", "Kenney Future", sans-serif'
+    ctx.clearRect(0, 0, width, height)
+    ctx.font = font
     ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.lineWidth = 10
+    ctx.textBaseline = 'alphabetic'
+    ctx.lineJoin = 'round'
+    ctx.miterLimit = 2
+    ctx.lineWidth = stroke
     ctx.strokeStyle = 'rgba(20, 24, 32, 0.85)'
-    ctx.strokeText(text, 256, 64)
+    ctx.strokeText(text, width / 2, ascent)
     ctx.fillStyle = color
-    ctx.fillText(text, 256, 64)
+    ctx.fillText(text, width / 2, ascent)
     const tex = new THREE.CanvasTexture(canvas)
     tex.colorSpace = THREE.SRGBColorSpace
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false })
     const sprite = new THREE.Sprite(mat)
     sprite.position.set(x, y, z)
-    const wide = Math.min(2.4, 0.7 + text.length * 0.14)
-    sprite.scale.set(wide, 0.62, 1)
+    const worldH = 0.48
+    sprite.scale.set(worldH * (width / height), worldH, 1)
     this.scene.add(sprite)
     this.popups.push({ sprite, life, max: life, vy: 0.65 })
+  }
+
+  /** Drop floating combat text, debris, and rings. Used when a round ends. */
+  clear(): void {
+    for (const popup of this.popups) this.dropPopup(popup)
+    this.popups = []
+    for (const chunk of this.chunks) {
+      this.scene.remove(chunk.mesh)
+      chunk.mesh.geometry.dispose()
+      ;(chunk.mesh.material as THREE.Material).dispose()
+    }
+    this.chunks = []
+    for (const ring of this.rings) {
+      this.scene.remove(ring.mesh)
+      ;(ring.mesh.material as THREE.Material).dispose()
+    }
+    this.rings = []
+    this.parts = []
+    this.smokeParts = []
+    this.positions.fill(0)
+    this.colors.fill(0)
+    this.smokePos.fill(0)
+    this.smokeCol.fill(0)
+    for (let i = 0; i < MAX; i++) this.positions[i * 3 + 1] = -50
+    for (let i = 0; i < 80; i++) this.smokePos[i * 3 + 1] = -50
+    const geo = this.points.geometry
+    ;(geo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true
+    ;(geo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true
+    const smokeGeo = this.smoke.geometry
+    ;(smokeGeo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true
+    ;(smokeGeo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true
+  }
+
+  private dropPopup(popup: Popup): void {
+    this.scene.remove(popup.sprite)
+    const mat = popup.sprite.material as THREE.SpriteMaterial
+    mat.map?.dispose()
+    mat.dispose()
   }
 
   /** A few solid bits when a UFO pops. Kept small so phones stay smooth. */
@@ -256,9 +304,7 @@ export class Fx {
       const mat = popup.sprite.material as THREE.SpriteMaterial
       mat.opacity = Math.max(0, popup.life / popup.max)
       if (popup.life <= 0) {
-        this.scene.remove(popup.sprite)
-        mat.map?.dispose()
-        mat.dispose()
+        this.dropPopup(popup)
         this.popups.splice(i, 1)
       }
     }

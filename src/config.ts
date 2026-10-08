@@ -371,16 +371,40 @@ export function stackCost(base: number, layersAlready: number): number {
   return Math.round(base * (1 + layersAlready * 0.55))
 }
 
-export function wavePreview(wave: WaveDef): string {
+export interface WaveChip {
+  count: number
+  name: string
+  /** Short counter, with no comma, so a chip can stay on one line. */
+  weak: string
+  tint: string
+}
+
+function weakTag(weak: string): string {
+  if (weak === 'rapid hits') return 'Rapid'
+  return weak.replace(', ', '/')
+}
+
+/** Display-only. Counts and matchups stay on the wave definition. */
+export function waveChips(wave: WaveDef): WaveChip[] {
   const counts = new Map<EnemyKind, number>()
   for (const group of wave.groups) counts.set(group.kind, (counts.get(group.kind) ?? 0) + group.count)
-  const lines: string[] = []
+  const chips: WaveChip[] = []
   for (const [kind, count] of counts) {
     const def = ENEMIES[kind]
-    const name = count === 1 ? def.label : def.plural
-    lines.push(`${count} ${name} · weak to ${def.weak}`)
+    chips.push({
+      count,
+      name: def.label,
+      weak: weakTag(def.weak),
+      tint: `#${def.tint.toString(16).padStart(6, '0')}`,
+    })
   }
-  return lines.join('\n')
+  return chips
+}
+
+export function wavePreview(wave: WaveDef): string {
+  return waveChips(wave)
+    .map((chip) => `${chip.count}x ${chip.name}, ${chip.weak}`)
+    .join(' | ')
 }
 
 export function partCost(id: PartId): number {

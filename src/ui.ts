@@ -1,4 +1,5 @@
-import { asset, pieceThumbnail } from './assets'
+import { asset, heartUrl, pieceThumbnail } from './assets'
+import type { WaveChip } from './config'
 
 export interface ActionButton {
   id: string
@@ -31,9 +32,10 @@ export interface HudState {
   hint: boolean
   startLabel: string
   startEnabled: boolean
-  preview: string | null
+  countdownLabel: string | null
+  preview: WaveChip[] | null
   bannerTitle: string | null
-  bannerBody: string | null
+  bannerChips: WaveChip[] | null
   selection: SelectionView | null
   end: { kind: 'win' | 'lose'; title: string; detail: string; stars: number } | null
 }
@@ -67,7 +69,8 @@ export class Hud {
   private previewEl: HTMLElement
   private bannerEl: HTMLElement
   private bannerTitle: HTMLElement
-  private bannerBody: HTMLElement
+  private bannerChipsEl: HTMLElement
+  private countEl: HTMLElement
   private damageEl: HTMLButtonElement
   private loadingEl: HTMLElement
   private loadingText: HTMLElement
@@ -86,15 +89,15 @@ export class Hud {
         <header id="top">
           <div class="pill gold" id="gold"><img alt="" src="${asset('assets/icons/coin.png')}" /><span>0</span></div>
           <div class="pill wave" id="wave"><img alt="" src="${asset('assets/icons/flag.png')}" /><span>1/9</span></div>
-          <div class="pill pets" id="pets"><img alt="" src="${asset('assets/icons/heart.png')}" /><span>5</span></div>
+          <div class="pill pets" id="pets"><img alt="" src="${heartUrl()}" /><span>5</span></div>
           <button type="button" id="mute" class="round" aria-label="Sound"><img alt="" src="${asset('assets/icons/audio-on.png')}" /></button>
         </header>
         <div id="banner" hidden>
           <p id="banner-title"></p>
-          <p id="banner-body"></p>
+          <div id="banner-chips"></div>
         </div>
         <div id="dock">
-          <p id="preview" hidden></p>
+          <div id="preview" class="chip-row" hidden></div>
           <p id="hint"></p>
           <section id="card" hidden>
             <h2 id="card-title"></h2>
@@ -105,13 +108,14 @@ export class Hud {
           <div id="actions">
             <button type="button" id="speed" class="btn yellow">1×</button>
             <button type="button" id="dmg" class="btn yellow" aria-pressed="true">Nums</button>
+            <div id="count" hidden></div>
             <button type="button" id="start" class="btn green">Call wave</button>
           </div>
         </div>
       </div>
       <div id="end" hidden>
         <div class="card end-card">
-          <img id="end-icon" alt="" src="${asset('assets/icons/heart.png')}" />
+          <img id="end-icon" alt="" src="${heartUrl()}" />
           <div id="stars" hidden></div>
           <h1 id="end-title"></h1>
           <p id="end-detail"></p>
@@ -145,7 +149,8 @@ export class Hud {
     this.previewEl = this.need('#preview')
     this.bannerEl = this.need('#banner')
     this.bannerTitle = this.need('#banner-title')
-    this.bannerBody = this.need('#banner-body')
+    this.bannerChipsEl = this.need('#banner-chips')
+    this.countEl = this.need('#count')
     this.damageEl = this.need('#dmg') as HTMLButtonElement
     this.loadingEl = this.need('#loading')
     this.loadingText = this.need('#loading-text')
@@ -238,6 +243,11 @@ export class Hud {
     pill?.classList.add('shake')
   }
 
+  /** Coin flights and other DOM ghosts. World popups are cleared on the effect system. */
+  clearTransient(): void {
+    this.root.querySelectorAll('.fly-coin').forEach((node) => node.remove())
+  }
+
   render(state: HudState): void {
     if (state.gold !== this.gold) {
       this.gold = state.gold
@@ -255,15 +265,16 @@ export class Hud {
     this.damageEl.classList.toggle('pressed', state.damageNumbers)
     this.startEl.textContent = state.startLabel
     this.startEl.disabled = !state.startEnabled
+    this.countEl.hidden = !state.countdownLabel
+    this.countEl.textContent = state.countdownLabel ?? ''
     this.hintEl.hidden = !state.hint
     if (state.hint) {
       this.hintEl.textContent = 'Tap the grass under the arrow, then stack a weapon. Taller towers reach farther.'
     }
-    this.previewEl.hidden = !state.preview
-    this.previewEl.textContent = state.preview ?? ''
+    this.fillChips(this.previewEl, state.preview, 'chip')
     this.bannerEl.hidden = !state.bannerTitle
     this.bannerTitle.textContent = state.bannerTitle ?? ''
-    this.bannerBody.textContent = state.bannerBody ?? ''
+    this.fillChips(this.bannerChipsEl, state.bannerChips, 'bchip')
 
     if (!state.selection) {
       this.cardEl.hidden = true
@@ -286,7 +297,10 @@ export class Hud {
           button.type = 'button'
           button.dataset.part = action.id
           button.className = `piece ${action.tone}`
-          const thumb = pieceThumbnail(action.id)
+          const thumb =
+            action.id === 'upgrade'
+              ? asset('assets/ui/ui-pack/PNG/Yellow/Double/star.png')
+              : pieceThumbnail(action.id)
           const art = thumb
             ? `<img class="thumb" alt="" src="${thumb}" />`
             : `<img class="thumb fallback" alt="" src="${coin}" />`
@@ -305,6 +319,7 @@ export class Hud {
         button.classList.toggle('hot', action.id === this.focusedId)
       })
       this.showFocused()
+      this.syncCardFade()
     }
 
     if (state.end) {
@@ -329,13 +344,51 @@ export class Hud {
           }
         }
       }
-      this.endIcon.src = asset(
-        state.end.kind === 'win' ? 'assets/icons/heart.png' : 'assets/ui/ui-pack/PNG/Red/Double/icon_cross.png',
-      )
+      this.endIcon.src =
+        state.end.kind === 'win' ? heartUrl() : asset('assets/ui/ui-pack/PNG/Red/Double/icon_cross.png')
     } else {
       this.endEl.hidden = true
       this.starSignature = ''
     }
+  }
+
+  private fillChips(host: HTMLElement, chips: WaveChip[] | null, kind: 'chip' | 'bchip'): void {
+    const list = chips ?? []
+    host.hidden = list.length === 0
+    const sig = list.map((chip) => `${chip.count}|${chip.name}|${chip.weak}|${chip.tint}`).join(';')
+    if (host.dataset.sig === sig) return
+    host.dataset.sig = sig
+    host.replaceChildren()
+    for (const chip of list) {
+      const row = document.createElement('span')
+      row.className = kind
+      const swatch = document.createElement('i')
+      swatch.style.background = chip.tint
+      row.append(swatch)
+      if (kind === 'chip') {
+        const label = document.createElement('span')
+        label.textContent = `${chip.count}× ${chip.name} · ${chip.weak}`
+        row.append(label)
+      } else {
+        const copy = document.createElement('span')
+        copy.className = 'bchip-copy'
+        const name = document.createElement('span')
+        name.textContent = `${chip.count} ${chip.name}`
+        copy.append(name)
+        for (const part of chip.weak.split('/')) {
+          const line = document.createElement('span')
+          line.textContent = part
+          copy.append(line)
+        }
+        row.append(copy)
+      }
+      host.append(row)
+    }
+  }
+
+  private syncCardFade(): void {
+    const overflow = this.cardEl.scrollHeight > this.cardEl.clientHeight + 2
+    this.cardEl.classList.toggle('fade', overflow)
   }
 
   private need(selector: string): HTMLElement {

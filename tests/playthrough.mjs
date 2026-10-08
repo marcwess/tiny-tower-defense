@@ -1,38 +1,13 @@
-import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { chromium } from 'playwright'
+import { preview } from 'vite'
 
 const PORT = 4173
 const URL = `http://127.0.0.1:${PORT}/?capture=1`
 
-const preview = spawn(
-  process.execPath,
-  ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'],
-  { stdio: ['ignore', 'pipe', 'pipe'], detached: true },
-)
-
-function stopPreview() {
-  if (preview.exitCode !== null || preview.pid == null) return
-  try {
-    process.kill(-preview.pid, 'SIGKILL')
-  } catch {
-    try {
-      preview.kill('SIGKILL')
-    } catch {
-      /* already gone */
-    }
-  }
-}
-
-let previewLog = ''
-preview.stdout.on('data', (chunk) => {
-  previewLog += chunk.toString()
-})
-preview.stderr.on('data', (chunk) => {
-  previewLog += chunk.toString()
-})
-
 const errors = []
+let browser = null
+let server = null
 
 async function waitForServer() {
   for (let i = 0; i < 50; i++) {
@@ -44,7 +19,7 @@ async function waitForServer() {
     }
     await delay(200)
   }
-  throw new Error(`preview did not start\n${previewLog}`)
+  throw new Error('preview did not start')
 }
 
 function stateOf(page) {
@@ -63,9 +38,13 @@ async function waitUntil(page, label, predicate, timeout = 20000) {
   throw new Error(`${label} timed out. Last state ${JSON.stringify(last)}`)
 }
 
+let code = 0
 try {
+  server = await preview({
+    preview: { host: '127.0.0.1', port: PORT, strictPort: true },
+  })
   await waitForServer()
-  const browser = await chromium.launch({
+  browser = await chromium.launch({
     headless: true,
     args: [
       '--use-angle=swiftshader',
@@ -348,9 +327,13 @@ try {
   if (finalState.rescues < 1) throw new Error(`mixed defense never rescued a pet: ${JSON.stringify(finalState)}`)
   if (finalState.gold > 150) throw new Error(`mixed defense hoarded gold: ${JSON.stringify(finalState)}`)
 
-  await browser.close()
   if (errors.length) throw new Error(errors.join('\n'))
   console.log('playthrough ok')
+} catch (error) {
+  code = 1
+  console.error(error)
 } finally {
-  stopPreview()
+  if (browser) await browser.close()
+  if (server) await server.close()
 }
+process.exit(code)

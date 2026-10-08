@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { arrowTexture, asset, loadAssets, renderPieceThumbnails, spawnModel } from './assets'
+import { arrowTexture, heartTexture, loadAssets, renderPieceThumbnails, spawnModel } from './assets'
 import { audio } from './audio'
 import {
   BASE_COST,
@@ -22,7 +22,9 @@ import {
   matchup,
   stackCost,
   starCount,
+  waveChips,
   wavePreview,
+  type WaveChip,
   type EnemyKind,
   type MiddleId,
   type RoofId,
@@ -187,13 +189,12 @@ export class Game {
   private pets: Pet[] = []
   private projectiles: Projectile[] = []
   private carries: Carry[] = []
-  private heartMap: THREE.Texture | null = null
   private rescues = 0
   private abductions = 0
   private waveLog: WaveRow[] = []
   private showDamage = true
   private bannerTitle: string | null = null
-  private bannerBody: string | null = null
+  private bannerChips: WaveChip[] | null = null
   private bannerT = 0
   private effectiveAt = new Map<number, number>()
   private highlight: THREE.Mesh
@@ -382,7 +383,7 @@ export class Game {
     if (aspect < 1.05) {
       return { fov: 38, pitch: 0.74, distance: 18.4, azimuth: 2.5, lookY: 0.18, tx: 3.0, ty: 0.12, tz: 4.8 }
     }
-    return { fov: 32, pitch: 0.72, distance: 15.4, azimuth: 2.25, lookY: 0.12, tx: 3.15, ty: 0.08, tz: 4.9 }
+    return { fov: 30, pitch: 0.72, distance: 12.2, azimuth: 2.25, lookY: 0.12, tx: 3.15, ty: 0.08, tz: 4.9 }
   }
 
   private applyFraming(resetView: boolean): void {
@@ -563,7 +564,7 @@ export class Game {
       this.bannerT = Math.max(0, this.bannerT - dt)
       if (this.bannerT === 0) {
         this.bannerTitle = null
-        this.bannerBody = null
+        this.bannerChips = null
       }
     }
     const playing = this.phase === 'ready' || this.phase === 'wave' || this.phase === 'breather'
@@ -654,14 +655,6 @@ export class Game {
     if (this.livingPets() <= 0) this.lose()
   }
 
-  private heartTexture(): THREE.Texture {
-    if (!this.heartMap) {
-      this.heartMap = new THREE.TextureLoader().load(asset('assets/icons/heart.png'))
-      this.heartMap.colorSpace = THREE.SRGBColorSpace
-    }
-    return this.heartMap
-  }
-
   private beginCarry(enemy: Enemy, pet: Pet): void {
     pet.reserved = true
     pet.ride()
@@ -684,10 +677,18 @@ export class Game {
     )
     glow.renderOrder = 4
     const icon = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: this.heartTexture(), transparent: true, depthWrite: false }),
+      new THREE.SpriteMaterial({
+        map: heartTexture(),
+        transparent: true,
+        depthWrite: false,
+        alphaTest: 0.35,
+        toneMapped: false,
+      }),
     )
-    icon.scale.set(0.9, 0.9, 1)
-    icon.position.y = ENEMIES[enemy.kind].scale * 0.85 + 0.55
+    icon.center.set(0.5, 0)
+    icon.scale.set(0.34, 0.34, 1)
+    icon.position.y = ENEMIES[enemy.kind].scale * 1.05 + 0.36
+    icon.renderOrder = 8
     enemy.group.add(icon)
     this.scene.add(beam)
     this.scene.add(burst)
@@ -1057,10 +1058,9 @@ export class Game {
   startWave(bonus: boolean): void {
     if (this.phase !== 'ready' && this.phase !== 'breather') return
     if (bonus && this.phase === 'breather' && this.countdown > 0.75) this.gold += earlyBonus(this.waveIndex)
-    const preview = wavePreview(WAVES[this.waveIndex])
     this.bannerTitle = this.waveIndex === WAVES.length - 1 ? 'Boss wave' : `Wave ${this.waveIndex + 1}`
-    this.bannerBody = preview
-    this.bannerT = 1.7
+    this.bannerChips = waveChips(WAVES[this.waveIndex])
+    this.bannerT = 2
     this.phase = 'wave'
     this.waveTime = 0
     this.spawnIndex = 0
@@ -1256,7 +1256,7 @@ export class Game {
       actions.push({
         id: 'upgrade',
         label: 'Upgrade',
-        effect: nextTier == null ? 'Maxed' : `Tier ${tower.tier + 1}`,
+        effect: nextTier == null ? 'Maxed' : 'Next',
         detail: 'Stronger shots. The weapon grows and the trim changes color.',
         cost: nextTier == null ? 'Max' : String(nextTier),
         enabled: nextTier != null && this.gold >= nextTier,
@@ -1312,11 +1312,11 @@ export class Game {
       })
       const weapon = tower.weapon ? WEAPONS[tower.weapon].label : 'No weapon'
       const rate = stats.cooldown < 100 ? `${(1 / stats.cooldown).toFixed(1)}/s` : '—'
-      const tier = tower.tier > 0 ? ` · tier ${tower.tier}` : ''
+      const pips = `${'●'.repeat(tower.tier)}${'○'.repeat(MAX_UPGRADE - tower.tier)}`
       return {
         title: 'Your tower',
         blurb: '',
-        stats: `Range ${stats.range.toFixed(1)} · ${rate} · ${weapon}${tier}`,
+        stats: `Range ${stats.range.toFixed(1)} · ${rate} · ${weapon}  ${pips}`,
         actions,
       }
     }
@@ -1360,20 +1360,22 @@ export class Game {
   private refreshHud(): void {
     const playing = this.phase === 'ready' || this.phase === 'breather'
     let startLabel = 'Call wave'
+    let countdownLabel: string | null = null
     if (this.phase === 'breather') {
       const secs = Math.max(0, Math.ceil(this.countdown))
       const bonus = earlyBonus(this.waveIndex)
-      startLabel = this.countdown > 0.75 ? `Call +${bonus} · ${secs}s` : 'Call wave'
+      if (this.countdown > 0.75) {
+        startLabel = `Call +${bonus}`
+        countdownLabel = `${secs}s`
+      }
     } else if (this.phase === 'wave') {
       startLabel = `${this.enemies.length} UFOs`
     } else if (this.phase === 'victory') startLabel = 'Clear'
     else if (this.phase === 'defeat') startLabel = 'Over'
     const waveNo = Math.min(this.waveIndex + 1, WAVES.length)
-    const preview = playing && this.waveIndex < WAVES.length ? wavePreview(WAVES[this.waveIndex]) : null
+    const preview = playing && this.waveIndex < WAVES.length ? waveChips(WAVES[this.waveIndex]) : null
     const stars = starCount(this.livingPets())
-    let waveLabel = `Wave ${waveNo}/${WAVES.length}`
-    if (this.phase === 'breather') waveLabel += ` · ${Math.max(0, Math.ceil(this.countdown))}s`
-    if (this.phase === 'victory') waveLabel = 'All clear'
+    const waveLabel = `Wave ${waveNo}/${WAVES.length}`
     this.hud.render({
       gold: this.gold,
       waveLabel,
@@ -1388,9 +1390,10 @@ export class Game {
       hint: this.hint && this.towers.length === 0,
       startLabel,
       startEnabled: playing,
+      countdownLabel,
       preview,
       bannerTitle: this.bannerTitle,
-      bannerBody: this.bannerBody,
+      bannerChips: this.bannerChips,
       selection: this.selectionView(),
       end:
         this.phase === 'victory'
@@ -1414,8 +1417,17 @@ export class Game {
     })
   }
 
+  private clearAnnouncements(): void {
+    this.bannerTitle = null
+    this.bannerChips = null
+    this.bannerT = 0
+    this.fx.clear()
+    this.hud.clearTransient()
+  }
+
   private win(): void {
     if (this.phase === 'victory' || this.phase === 'defeat') return
+    this.clearAnnouncements()
     this.phase = 'victory'
     for (const pet of this.pets) {
       if (!pet.alive) continue
@@ -1430,6 +1442,7 @@ export class Game {
 
   private lose(): void {
     if (this.phase === 'victory' || this.phase === 'defeat') return
+    this.clearAnnouncements()
     this.phase = 'defeat'
     this.noteWave(Math.min(this.waveIndex + 1, WAVES.length))
     audio.duck(true)
@@ -1458,9 +1471,7 @@ export class Game {
     this.abductions = 0
     this.waveLog = []
     this.effectiveAt.clear()
-    this.bannerTitle = null
-    this.bannerBody = null
-    this.bannerT = 0
+    this.clearAnnouncements()
     this.gold = START_GOLD
     this.phase = 'ready'
     this.waveIndex = 0
@@ -1564,7 +1575,7 @@ export class Game {
         this.phase = 'wave'
         this.waveIndex = WAVES.length - 1
         this.bannerTitle = 'Boss wave'
-        this.bannerBody = wavePreview(WAVES[WAVES.length - 1])
+        this.bannerChips = waveChips(WAVES[WAVES.length - 1])
         this.bannerT = 8
         const boss = this.spawnEnemy('boss', 1, 0.55)
         boss.pos.y = ENEMIES.boss.hover
@@ -1577,7 +1588,7 @@ export class Game {
         this.waveIndex = 4
         this.countdown = 8
         this.bannerTitle = null
-        this.bannerBody = null
+        this.bannerChips = null
         this.refreshHud()
       },
       debugPop: () => {

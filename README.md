@@ -46,7 +46,7 @@ Match the weapon to the UFO. The next-wave card lists who is coming and what the
   - **Ballista, cannon, catapult, turret.** The weapon picks the shot.
   - **Upgrade** three times. The weapon grows and the trim changes color.
 - **Drag** to pan. **Pinch** or the **mouse wheel** to zoom.
-- **Call wave** sends the next group. Between waves the countdown calls it for you; **Call +gold** pays a bonus for starting early. **2×** speeds the action up. **Nums** toggles damage numbers.
+- **Call wave** sends the next group. Between waves a small timer counts down and then calls it for you; **Call +gold** pays a bonus for starting early. **2×** speeds the action up. **Nums** toggles damage numbers.
 - **Sell** returns half of what that tower cost.
 - The **speaker** mutes music and effects. The first tap starts the music.
 - Clear the meadow for a star rating: 3 if all five pets are home, 2 for three or four, 1 for one or two.

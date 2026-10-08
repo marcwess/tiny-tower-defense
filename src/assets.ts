@@ -331,6 +331,56 @@ export function contactShadow(radius: number): THREE.Mesh {
   return mesh
 }
 
+let heartCanvas: HTMLCanvasElement | null = null
+let heartMap: THREE.Texture | null = null
+
+/** Pink heart with a real alpha hole. The Kenney icon is an opaque black silhouette. */
+function drawHeart(): HTMLCanvasElement {
+  if (heartCanvas) return heartCanvas
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 128
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas unavailable')
+  ctx.clearRect(0, 0, 128, 128)
+  ctx.save()
+  ctx.translate(64, 66)
+  ctx.scale(54, 50)
+  ctx.beginPath()
+  ctx.moveTo(0, 0.95)
+  ctx.bezierCurveTo(-0.12, 0.52, -1.08, 0.42, -1.08, -0.18)
+  ctx.bezierCurveTo(-1.08, -0.78, -0.42, -1.08, 0, -0.42)
+  ctx.bezierCurveTo(0.42, -1.08, 1.08, -0.78, 1.08, -0.18)
+  ctx.bezierCurveTo(1.08, 0.42, 0.12, 0.52, 0, 0.95)
+  ctx.closePath()
+  const fill = ctx.createLinearGradient(0, -1, 0, 1)
+  fill.addColorStop(0, '#ff9aaf')
+  fill.addColorStop(0.42, '#ff3b66')
+  fill.addColorStop(1, '#d41448')
+  ctx.fillStyle = fill
+  ctx.fill()
+  ctx.beginPath()
+  ctx.ellipse(-0.38, -0.42, 0.22, 0.14, -0.6, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(255, 236, 242, 0.85)'
+  ctx.fill()
+  ctx.restore()
+  heartCanvas = canvas
+  return canvas
+}
+
+export function heartUrl(): string {
+  return drawHeart().toDataURL('image/png')
+}
+
+export function heartTexture(): THREE.Texture {
+  if (!heartMap) {
+    heartMap = new THREE.CanvasTexture(drawHeart())
+    heartMap.colorSpace = THREE.SRGBColorSpace
+    heartMap.needsUpdate = true
+  }
+  return heartMap
+}
+
 const pieceThumbs = new Map<string, string>()
 
 export function pieceThumbnail(id: string): string {
